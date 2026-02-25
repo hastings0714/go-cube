@@ -47,3 +47,82 @@ kill $SERVER_PID
 wait $SERVER_PID 2>/dev/null
 
 echo "Test completed."
+
+# ============================================================
+# GET vs POST 对比测试
+# ============================================================
+
+echo ""
+echo "========================================"
+echo "=== GET vs POST 测试 ==="
+echo "========================================"
+
+./go-cube &
+SERVER_PID=$!
+sleep 2
+
+BASE="http://localhost:4000"
+QUERY='{"ungrouped":true,"measures":[],"timeDimensions":[{"dimension":"AccessView.ts","dateRange":"from 15 minutes ago to 15 minutes from now"}],"order":{"AccessView.ts":"desc"},"filters":[],"dimensions":["AccessView.id","AccessView.ts","AccessView.ip","AccessView.host","AccessView.resultType"],"limit":3,"offset":0,"segments":["AccessView.org","AccessView.black"],"timezone":"Asia/Shanghai"}'
+
+pass=0
+fail=0
+
+check() {
+    local desc="$1"
+    local result="$2"
+    if echo "$result" | jq -e '.results[0].data' > /dev/null 2>&1; then
+        count=$(echo "$result" | jq '.results[0].data | length')
+        echo "[PASS] $desc — $count rows"
+        ((pass++))
+    else
+        echo "[FAIL] $desc"
+        echo "$result" | jq . 2>/dev/null || echo "$result"
+        ((fail++))
+    fi
+}
+
+echo ""
+echo "=== GET: query in URL ==="
+ENCODED=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$QUERY")
+result=$(curl -sf "$BASE/load?query=$ENCODED")
+check "GET ?query=" "$result"
+
+echo ""
+echo "=== POST: query as JSON body ==="
+result=$(curl -sf -X POST "$BASE/load" \
+    -H "Content-Type: application/json" \
+    -d "$QUERY")
+check "POST body (direct JSON)" "$result"
+
+echo ""
+echo "=== POST: empty body should fail ==="
+result=$(curl -s -X POST "$BASE/load" -H "Content-Type: application/json" -d "")
+if echo "$result" | jq -e '.error' > /dev/null 2>&1; then
+    echo "[PASS] empty body returns error: $(echo "$result" | jq -r '.error')"
+    ((pass++))
+else
+    echo "[FAIL] expected error response"
+    echo "$result"
+    ((fail++))
+fi
+
+echo ""
+echo "=== GET: missing query param should fail ==="
+result=$(curl -s "$BASE/load")
+if echo "$result" | jq -e '.error' > /dev/null 2>&1; then
+    echo "[PASS] missing param returns error: $(echo "$result" | jq -r '.error')"
+    ((pass++))
+else
+    echo "[FAIL] expected error response"
+    echo "$result"
+    ((fail++))
+fi
+
+echo ""
+echo "--- $pass passed, $fail failed ---"
+
+echo ""
+echo "Stopping server..."
+kill $SERVER_PID
+wait $SERVER_PID 2>/dev/null
+echo "All tests completed."

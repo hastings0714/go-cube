@@ -103,7 +103,23 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 	}
 
 	writeFields(req.Dimensions)
-	writeFields(req.Measures)
+	// 对 measures 添加类型转换，确保返回正确的类型
+	for _, name := range req.Measures {
+		fieldName := extractFieldName(name)
+		if field, ok := cube.GetField(fieldName); ok {
+			if !firstField {
+				sql.WriteString(", ")
+			}
+			// 根据字段类型添加类型转换
+			sqlExpr := field.SQL
+			if field.Type == "number" || field.Type == "count" || field.Type == "sum" ||
+				field.Type == "avg" || field.Type == "min" || field.Type == "max" {
+				sqlExpr = fmt.Sprintf("toFloat64(%s)", field.SQL)
+			}
+			fmt.Fprintf(&sql, "%s AS \"%s\"", sqlExpr, name)
+			firstField = false
+		}
+	}
 
 	// 如果没有有效字段，添加默认值避免 SQL 语法错误
 	if firstField {

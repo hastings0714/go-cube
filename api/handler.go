@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -62,15 +63,26 @@ func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// 解析查询参数
-	queryParam := r.URL.Query().Get("query")
-	if queryParam == "" {
-		h.writeError(w, http.StatusBadRequest, "query_parameter_required", "Query parameter is required")
+	// 解析查询：GET 从 ?query= 读取，POST 从 body 读取，格式相同
+	var body []byte
+	if r.Method == http.MethodPost {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "body_read_failed", fmt.Sprintf("Failed to read request body: %v", err))
+			return
+		}
+		defer r.Body.Close()
+	} else {
+		body = []byte(r.URL.Query().Get("query"))
+	}
+	if len(body) == 0 {
+		h.writeError(w, http.StatusBadRequest, "query_required", "Query is required")
 		return
 	}
 
 	var queryReq QueryRequest
-	if err := json.Unmarshal([]byte(queryParam), &queryReq); err != nil {
+	if err := json.Unmarshal(body, &queryReq); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_query_format", fmt.Sprintf("Invalid query format: %v", err))
 		return
 	}
