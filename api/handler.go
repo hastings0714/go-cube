@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -38,6 +39,15 @@ func Init(cfg *Config) error {
 
 	handler = NewHandler(modelLoader, chClient)
 	return nil
+}
+
+// Load executes a cube query and returns the result.
+// Init must be called before using this function.
+func Load(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
+	if handler == nil {
+		return nil, fmt.Errorf("go-cube not initialized: call Init first")
+	}
+	return handler.load(ctx, req)
 }
 
 func RegisterHandler() http.Handler {
@@ -87,40 +97,72 @@ func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 验证查询
-	if err := validateQuery(&queryReq); err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid_query", fmt.Sprintf("Invalid query: %v", err))
+	response, err := h.load(ctx, &queryReq)
+	if err != nil {
+		var cubeErr *QueryError
+		if errors.As(err, &cubeErr) {
+			h.writeError(w, cubeErr.Status, cubeErr.Type, cubeErr.Message)
+		} else {
+			h.writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		}
 		return
+	}
+
+	// 返回JSON响应
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// QueryError represents a structured query error with an HTTP status code.
+// It is returned by load and can be inspected by HTTP handlers to map errors
+// to appropriate HTTP responses via errors.As.
+type QueryError struct {
+	// Status is the suggested HTTP status code for this error.
+	Status int
+	// Type is a machine-readable error identifier.
+	Type string
+	// Message is a human-readable description of the error.
+	Message string
+}
+
+func (e *QueryError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Type, e.Message)
+}
+
+func (h *Handler) load(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
+	// 验证查询
+	if err := validateQuery(req); err != nil {
+		return nil, &QueryError{http.StatusBadRequest, "invalid_query", fmt.Sprintf("Invalid query: %v", err)}
 	}
 
 	// 获取模型（从 dimensions、measures 或 filters 中提取）
 	modelName := ""
-	if len(queryReq.Dimensions) > 0 {
-		modelName = extractModelName(queryReq.Dimensions[0])
-	} else if len(queryReq.Measures) > 0 {
-		modelName = extractModelName(queryReq.Measures[0])
-	} else if len(queryReq.Filters) > 0 {
+	if len(req.Dimensions) > 0 {
+		modelName = extractModelName(req.Dimensions[0])
+	} else if len(req.Measures) > 0 {
+		modelName = extractModelName(req.Measures[0])
+	} else if len(req.Filters) > 0 {
 		// 从 filters 中提取模型名
-		modelName = extractModelName(queryReq.Filters[0].Member)
+		modelName = extractModelName(req.Filters[0].Member)
 	}
 
 	if modelName == "" {
-		h.writeError(w, http.StatusBadRequest, "model_not_determined", "Cannot determine model from query")
-		return
+		return nil, &QueryError{http.StatusBadRequest, "model_not_determined", "Cannot determine model from query"}
 	}
 
 	// 加载模型
 	m, err := h.modelLoader.Load(modelName)
 	if err != nil {
-		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("Model '%s' not found: %v", modelName, err))
-		return
+		return nil, &QueryError{http.StatusNotFound, "model_not_found", fmt.Sprintf("Model '%s' not found: %v", modelName, err)}
 	}
 
 	// 构建SQL
-	query, params, err := BuildQuery(&queryReq, m)
+	query, params, err := BuildQuery(req, m)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "query_build_failed", fmt.Sprintf("Failed to build query: %v", err))
-		return
+		return nil, &QueryError{http.StatusBadRequest, "query_build_failed", fmt.Sprintf("Failed to build query: %v", err)}
 	}
 
 	// 打印生成的SQL（调试用）
@@ -130,27 +172,18 @@ func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 	// 执行查询
 	data, err := h.chClient.Query(ctx, query, params...)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "query_execution_failed", fmt.Sprintf("Query execution failed: %v", err))
-		return
+		return nil, &QueryError{http.StatusInternalServerError, "query_execution_failed", fmt.Sprintf("Query execution failed: %v", err)}
 	}
 
-	// 构建响应
-	response := QueryResponse{
+	return &QueryResponse{
 		QueryType: "regularQuery",
 		Results: []QueryResult{
 			{
-				Query: queryReq,
+				Query: *req,
 				Data:  data,
 			},
 		},
-	}
-
-	// 返回JSON响应
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("encode response: %v", err), http.StatusInternalServerError)
-		return
-	}
+	}, nil
 }
 
 func extractModelName(field string) string {
