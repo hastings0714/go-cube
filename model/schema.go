@@ -43,13 +43,9 @@ func (c *Cube) GetField(name string, subKey string) (Field, bool) {
 	}
 
 	if measure, ok := c.Measures[name]; ok {
-		sql := measure.SQL
-		if subKey != "" {
-			sql = strings.ReplaceAll(sql, "{key}", subKey)
-		}
 		return Field{
 			Name: name,
-			SQL:  sql,
+			SQL:  measure.SQL,
 			Type: measure.Type,
 		}, true
 	}
