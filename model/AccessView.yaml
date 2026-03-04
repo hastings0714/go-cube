@@ -170,6 +170,16 @@ cube:
       type: array
       title: 敏感数据名称(响应)`
 
+    reqSensVal:
+      sql: req_sens_v
+      type: array
+      title: 敏感数据值(请求)
+
+    respSensVal:
+      sql: res_sens_v
+      type: array
+      title: 敏感数据值(响应)
+
     reqSensKeyNum:
       sql: arrayReduce('sumMap', arrayMap(x -> map(x, 1), req_sens_k))
       type: string
