@@ -144,6 +144,15 @@ result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22
 check "弱点风险: aggWeakScore+aggWeakKey+lastTs" "$result"
 
 echo ""
+echo "=== 15. 隐私数据明细: sensKeyCombineExt + sensScoreCombineExt > 20, measures: count+uniqUserCount+uniqApiCount+uniqIpCount ==="
+# measures: [count, uniqUserCount, uniqApiCount, uniqIpCount]
+# filter: sensScoreCombineExt gt 20
+# dimensions: [sensKeyCombineExt, sensValCombineExt, channel, sensPrivacyCombineExt, sensScoreCombineExt]
+# limit: 20, segments: org+black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%5B%22AccessView.count%22%2C%22AccessView.uniqUserCount%22%2C%22AccessView.uniqApiCount%22%2C%22AccessView.uniqIpCount%22%5D%2C%22timeDimensions%22%3A%5B%7B%22dimension%22%3A%22AccessView.ts%22%2C%22dateRange%22%3A%22from+15+minutes+ago+to+15+minutes+from+now%22%7D%5D%2C%22order%22%3A%7B%22AccessView.count%22%3A%22desc%22%7D%2C%22filters%22%3A%5B%7B%22member%22%3A%22AccessView.sensScoreCombineExt%22%2C%22operator%22%3A%22gt%22%2C%22values%22%3A%5B%2220%22%5D%7D%5D%2C%22dimensions%22%3A%5B%22AccessView.sensKeyCombineExt%22%2C%22AccessView.sensValCombineExt%22%2C%22AccessView.channel%22%2C%22AccessView.sensPrivacyCombineExt%22%2C%22AccessView.sensScoreCombineExt%22%5D%2C%22limit%22%3A20%2C%22offset%22%3A0%2C%22segments%22%3A%5B%22AccessView.org%22%2C%22AccessView.black%22%5D%2C%22timezone%22%3A%22Asia%2FShanghai%22%7D")
+check "隐私数据明细: sensKeyCombineExt+sensValCombineExt+channel+sensPrivacyCombineExt+sensScoreCombineExt" "$result"
+
+echo ""
 echo "--- $pass passed, $fail failed ---"
 
 echo ""
