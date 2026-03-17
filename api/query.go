@@ -147,8 +147,16 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 	sql.WriteString(" FROM ")
 	sql.WriteString(cube.GetSQLTable())
 
-	// WHERE
+	// WHERE / HAVING
 	var where []string
+	var having []string
+
+	// isMeasure 判断某个 member 是否为 measure 字段（需走 HAVING）
+	isMeasure := func(member string) bool {
+		_, fieldName, _ := splitMemberName(member)
+		_, ok := cube.Measures[fieldName]
+		return ok
+	}
 
 	// segments
 	for _, seg := range req.Segments {
@@ -175,14 +183,31 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 				}
 			}
 			if len(orClauses) > 0 {
-				where = append(where, "("+strings.Join(orClauses, " OR ")+")")
+				// or 条件如含 measure 子句放 HAVING，否则 WHERE
+				hasMeasure := false
+				for _, sub := range filter.Or {
+					if isMeasure(sub.Member) {
+						hasMeasure = true
+						break
+					}
+				}
+				combined := "(" + strings.Join(orClauses, " OR ") + ")"
+				if hasMeasure {
+					having = append(having, combined)
+				} else {
+					where = append(where, combined)
+				}
 			}
 			continue
 		}
 
 		clause, p := buildFilterClause(filter, cube)
 		if clause != "" {
-			where = append(where, clause)
+			if isMeasure(filter.Member) {
+				having = append(having, clause)
+			} else {
+				where = append(where, clause)
+			}
 			params = append(params, p...)
 		}
 	}
@@ -239,6 +264,12 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 			sql.WriteString(gc.expr)
 			groupFirst = false
 		}
+	}
+
+	// HAVING
+	if len(having) > 0 {
+		sql.WriteString(" HAVING ")
+		sql.WriteString(strings.Join(having, " AND "))
 	}
 
 	// ORDER BY
