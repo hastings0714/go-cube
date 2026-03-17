@@ -88,7 +88,7 @@ cube:
       title: 出现状态计数
 
     ignoreCount:
-      sql: "sumMap([if(arrayStringConcat([risk,host,content],',') not in (select filter from postgres.risk_aggs where filter_type = 4 and org = '')=0, '始终忽略', '')],[1])"
+      sql: "sumMapIf((['始终忽略'],[1]), arrayStringConcat([risk,host,content],',') not in (select filter from postgres.risk_aggs where filter_type = 4 and org = '')=0)"
       type: number
       title: 忽略计数
 
