@@ -192,6 +192,65 @@ result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22
 check "count+avgProcessTime+maxProcessTime by nodeIp no granularity" "$result"
 
 echo ""
+echo "========================================"
+echo "=== AccessView file-related queries ==="
+echo "========================================"
+
+echo ""
+echo "=== 20. fileCount by fileDirection, no granularity (isFileSens!='' & fileName!='') ==="
+# measures: fileCount, dimensions: fileDirection
+# filters: isFileSens notEquals [''], fileName notEquals ['']
+# segments: org, black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22AccessView.fileCount%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22AccessView.ts%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22AccessView.isFileSens%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileName%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22AccessView.fileDirection%22%5D%2C%20%22segments%22%3A%20%5B%22AccessView.org%22%2C%20%22AccessView.black%22%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D")
+check "fileCount by fileDirection (isFileSens!='' & fileName!='')" "$result"
+
+echo ""
+echo "=== 21. fileNum+fileTypes total (isFileSens!='' & fileName!='') ==="
+# measures: fileNum, fileTypes, no dimensions
+# filters: isFileSens notEquals [''], fileName notEquals ['']
+# segments: org, black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22AccessView.fileNum%22%2C%20%22AccessView.fileTypes%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22AccessView.ts%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22AccessView.isFileSens%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileName%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22segments%22%3A%20%5B%22AccessView.org%22%2C%20%22AccessView.black%22%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D")
+check "fileNum+fileTypes total (isFileSens!='' & fileName!='')" "$result"
+
+echo ""
+echo "=== 22. fileCount by fileDirection, granularity=minute (isFileSens!='' & fileName!='') ==="
+# measures: fileCount, dimensions: fileDirection, granularity: minute (1h window)
+# filters: isFileSens notEquals [''], fileName notEquals ['']
+# segments: org, black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22AccessView.fileCount%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22AccessView.ts%22%2C%20%22dateRange%22%3A%20%22from%201%20hours%20ago%20to%20now%22%2C%20%22granularity%22%3A%20%22minute%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22AccessView.isFileSens%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileName%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22AccessView.fileDirection%22%5D%2C%20%22segments%22%3A%20%5B%22AccessView.org%22%2C%20%22AccessView.black%22%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D")
+check "fileCount by fileDirection granularity=minute (isFileSens!='' & fileName!='')" "$result"
+
+echo ""
+echo "=== 23. file detail list: lastId+lastTs+fileCount, order fileCount desc, fileDirection=下载, limit 20 ==="
+# measures: lastId, lastTs, fileCount
+# dimensions: fileName, channel, host, method, url, urlRoute, fileMd5, fileType, fileSha1, fileSensKeyNum
+# order: fileCount desc
+# filters: isFileSens!='' & fileName!='' & fileDirection=下载
+# limit: 20, segments: org, black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22AccessView.lastId%22%2C%20%22AccessView.lastTs%22%2C%20%22AccessView.fileCount%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22AccessView.ts%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22order%22%3A%20%7B%22AccessView.fileCount%22%3A%20%22desc%22%7D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22AccessView.isFileSens%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileName%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileDirection%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22%5Cu4e0b%5Cu8f7d%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22AccessView.fileName%22%2C%20%22AccessView.channel%22%2C%20%22AccessView.host%22%2C%20%22AccessView.method%22%2C%20%22AccessView.url%22%2C%20%22AccessView.urlRoute%22%2C%20%22AccessView.fileMd5%22%2C%20%22AccessView.fileType%22%2C%20%22AccessView.fileSha1%22%2C%20%22AccessView.fileSensKeyNum%22%5D%2C%20%22limit%22%3A%2020%2C%20%22offset%22%3A%200%2C%20%22segments%22%3A%20%5B%22AccessView.org%22%2C%20%22AccessView.black%22%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D")
+check "file detail list lastId+lastTs+fileCount order by fileCount desc fileDirection=下载 limit 20" "$result"
+
+echo ""
+echo "=== 24. count of privacy files (fileCategory=隐私文件, isSens!='' & sensScore>=0 & fileName!='') ==="
+# measures: count, no dimensions
+# filters: isSens!='' & sensScore>=0 & fileName!='' & fileCategory=隐私文件
+# segments: org, black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%20%5B%22AccessView.count%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22AccessView.ts%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22AccessView.isSens%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.sensScore%22%2C%20%22operator%22%3A%20%22gte%22%2C%20%22values%22%3A%20%5B%220%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileName%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileCategory%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22%5Cu9690%5Cu79c1%5Cu6587%5Cu4ef6%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22segments%22%3A%20%5B%22AccessView.org%22%2C%20%22AccessView.black%22%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D")
+check "count of privacy files (fileCategory=隐私文件)" "$result"
+
+echo ""
+echo "=== 25. privacy file detail list: ungrouped, 24 dims, fileCategory=隐私文件, limit 20 ==="
+# ungrouped: true, no measures
+# dimensions: ts, tsMs, id, channel, host, method, url, urlRoute, fileName, fileType, fileCategory,
+#             fileMd5, fileSha1, fileSensKeyNum, sid, uid, ip, ua, status, fileDirection,
+#             sensScore, responseRisk, responseAction, responseReason
+# order: ts desc
+# filters: isSens!='' & sensScore>=0 & fileName!='' & fileCategory=隐私文件
+# limit: 20, segments: org, black
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22ungrouped%22%3A%20true%2C%20%22measures%22%3A%20%5B%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22AccessView.ts%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22order%22%3A%20%7B%22AccessView.ts%22%3A%20%22desc%22%7D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22AccessView.isSens%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.sensScore%22%2C%20%22operator%22%3A%20%22gte%22%2C%20%22values%22%3A%20%5B%220%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileName%22%2C%20%22operator%22%3A%20%22notEquals%22%2C%20%22values%22%3A%20%5B%22%22%5D%7D%2C%20%7B%22member%22%3A%20%22AccessView.fileCategory%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22%5Cu9690%5Cu79c1%5Cu6587%5Cu4ef6%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22AccessView.ts%22%2C%20%22AccessView.tsMs%22%2C%20%22AccessView.id%22%2C%20%22AccessView.channel%22%2C%20%22AccessView.host%22%2C%20%22AccessView.method%22%2C%20%22AccessView.url%22%2C%20%22AccessView.urlRoute%22%2C%20%22AccessView.fileName%22%2C%20%22AccessView.fileType%22%2C%20%22AccessView.fileCategory%22%2C%20%22AccessView.fileMd5%22%2C%20%22AccessView.fileSha1%22%2C%20%22AccessView.fileSensKeyNum%22%2C%20%22AccessView.sid%22%2C%20%22AccessView.uid%22%2C%20%22AccessView.ip%22%2C%20%22AccessView.ua%22%2C%20%22AccessView.status%22%2C%20%22AccessView.fileDirection%22%2C%20%22AccessView.sensScore%22%2C%20%22AccessView.responseRisk%22%2C%20%22AccessView.responseAction%22%2C%20%22AccessView.responseReason%22%5D%2C%20%22limit%22%3A%2020%2C%20%22offset%22%3A%200%2C%20%22segments%22%3A%20%5B%22AccessView.org%22%2C%20%22AccessView.black%22%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D")
+check "privacy file detail list ungrouped 24 dims fileCategory=隐私文件 limit 20" "$result"
+
+echo ""
 echo "--- $pass passed, $fail failed ---"
 
 echo ""
