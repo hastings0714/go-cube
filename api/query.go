@@ -86,11 +86,127 @@ var granularityFunc = map[string]string{
 	"year":    "toStartOfYear",
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// Pre-Aggregation Filter: 将时间条件下推到子查询内部
+// ════════════════════════════════════════════════════════════════════════════════
+
+// preAggFilterResult 收集需要注入到子查询中的过滤条件。
+// 所有时间值都内联到 SQL 中（不使用 ? 绑定），因此不产生额外参数。
+type preAggFilterResult struct {
+	// placeholder -> SQL 片段（含 AND 前缀）
+	clauses map[string]string
+	// 已成功下推的维度 fieldName 集合，外层 WHERE 应跳过这些维度避免重复过滤
+	pushedDown map[string]bool
+}
+
+// buildPreAggFilters 扫描 req.TimeDimensions，匹配 cube.PreAggregationFilters，
+// 生成需要注入到子查询内部的 WHERE 条件片段。
+//
+// 所有时间值都通过 convertToClickHouseTimeExpr 统一转换为 ClickHouse 内联表达式，
+// 不使用 ? 绑定参数。
+//
+// 支持的 dateRange 格式：
+//   - nil / 不传               → 不加任何过滤（全部数据）
+//   - ["2026-03-20T00:00:00.000", "2026-03-20T23:59:59.000"] → 绝对时间
+//   - "from 7 days ago to now" → 相对范围
+//   - "today"                  → toDate(col) = today()
+//   - "this month" / "last month" → 月级范围
+func buildPreAggFilters(req *QueryRequest, cube *model.Cube) *preAggFilterResult {
+	result := &preAggFilterResult{
+		clauses:    make(map[string]string),
+		pushedDown: make(map[string]bool),
+	}
+
+	if len(cube.PreAggregationFilters) == 0 {
+		return result
+	}
+
+	// 建立 dimension fieldName -> PreAggregationFilter 的快速查找
+	filterMap := make(map[string]model.PreAggregationFilter, len(cube.PreAggregationFilters))
+	for _, pf := range cube.PreAggregationFilters {
+		filterMap[pf.Dimension] = pf
+	}
+
+	for _, td := range req.TimeDimensions {
+		// dateRange 为 nil → 不传为全部，不下推任何条件
+		if td.DateRange.V == nil {
+			continue
+		}
+		_, fieldName, _ := splitMemberName(td.Dimension)
+		pf, ok := filterMap[fieldName]
+		if !ok {
+			continue
+		}
+
+		col := pf.TargetColumn
+		pushed := false
+
+		switch v := td.DateRange.V.(type) {
+		case []string:
+			// 绝对时间范围：["2026-03-20T00:00:00.000", "2026-03-20T23:59:59.000"]
+			if len(v) == 2 {
+				startExpr := convertToClickHouseTimeExpr(v[0])
+				endExpr := convertToClickHouseTimeExpr(v[1])
+				clause := fmt.Sprintf("AND %s >= %s AND %s <= %s", col, startExpr, col, endExpr)
+				result.clauses[pf.Placeholder] = clause
+				pushed = true
+			}
+		case string:
+			// 相对时间范围 / 单值
+			if v != "" {
+				if start, end, ok := parseRelativeTimeRange(v); ok {
+					clause := fmt.Sprintf("AND %s >= %s AND %s <= %s", col, start, col, end)
+					result.clauses[pf.Placeholder] = clause
+					pushed = true
+				} else {
+					// 单值如 "today" → toDate(col) = today()
+					clause := fmt.Sprintf("AND toDate(%s) = %s", col, convertToClickHouseTimeExpr(v))
+					result.clauses[pf.Placeholder] = clause
+					pushed = true
+				}
+			}
+		}
+
+		if pushed {
+			result.pushedDown[fieldName] = true
+		}
+	}
+
+	return result
+}
+
+// applyPreAggFilters 将下推条件注入到 cube SQL 模板中，返回替换后的 SQL。
+//
+// 规则：
+//   - 匹配到的占位符 → 替换为生成的 AND 子句
+//   - 未匹配的占位符 → 替换为空字符串（因为模板中有 WHERE 1=1，语法安全）
+func applyPreAggFilters(sqlTable string, cube *model.Cube, result *preAggFilterResult) string {
+	replaced := sqlTable
+
+	for _, pf := range cube.PreAggregationFilters {
+		placeholder := "{" + pf.Placeholder + "}"
+		if clause, ok := result.clauses[pf.Placeholder]; ok {
+			replaced = strings.Replace(replaced, placeholder, clause, 1)
+		} else {
+			// 没有传入对应时间范围 → 移除占位符
+			replaced = strings.Replace(replaced, placeholder, "", 1)
+		}
+	}
+
+	return replaced
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// BuildQuery 主函数
+// ════════════════════════════════════════════════════════════════════════════════
+
 func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, error) {
 	var sql strings.Builder
-	var params []interface{}
 	var whereParams []interface{}
 	var havingParams []interface{}
+
+	// ── 第 0 步：处理 pre-aggregation filter 下推 ──────────────────────────
+	preAggResult := buildPreAggFilters(req, cube)
 
 	// 收集有 granularity 的时间维度：alias -> truncated SQL expr
 	type granularityCol struct {
@@ -116,9 +232,10 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		granCols = append(granCols, granularityCol{alias: alias, expr: expr})
 	}
 
-	// SELECT
+	// ── SELECT ─────────────────────────────────────────────────────────────
 	sql.WriteString("SELECT ")
 	first := true
+	memberInSelect := make(map[string]bool)
 	writeFields := func(names []string) {
 		for _, name := range names {
 			_, fieldName, subKey := splitMemberName(name)
@@ -128,32 +245,35 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 				}
 				fmt.Fprintf(&sql, "%s AS \"%s\"", field.SQL, name)
 				first = false
+				memberInSelect[name] = true
 			}
 		}
 	}
 	writeFields(req.Dimensions)
 	writeFields(req.Measures)
-	// granularity 截断列追加在 SELECT 末尾
 	for _, gc := range granCols {
 		if !first {
 			sql.WriteString(", ")
 		}
 		fmt.Fprintf(&sql, "%s AS \"%s\"", gc.expr, gc.alias)
 		first = false
+		memberInSelect[gc.alias] = true
 	}
 	if first {
 		sql.WriteString("1")
 	}
 
-	// FROM
-	sql.WriteString(" FROM ")
-	sql.WriteString(cube.GetSQLTable())
+	// ── FROM — 注入下推条件到子查询模板 ────────────────────────────────────
+	sqlTable := cube.GetSQLTable()
+	sqlTable = applyPreAggFilters(sqlTable, cube, preAggResult)
 
-	// WHERE / HAVING
+	sql.WriteString(" FROM ")
+	sql.WriteString(sqlTable)
+
+	// ── WHERE / HAVING ─────────────────────────────────────────────────────
 	var where []string
 	var having []string
 
-	// isMeasure 判断某个 member 是否为 measure 字段（需走 HAVING）
 	isMeasure := func(member string) bool {
 		_, fieldName, _ := splitMemberName(member)
 		_, ok := cube.Measures[fieldName]
@@ -170,9 +290,7 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 
 	// filters
 	for _, filter := range req.Filters {
-		// or 复合条件：将子条件以 OR 拼接后用括号包裹
 		if len(filter.Or) > 0 {
-			// or 与普通条件字段互斥，不允许同时存在
 			if filter.Member != "" || filter.Operator != "" || filter.Values != nil {
 				return "", nil, fmt.Errorf("filter 不能同时包含 or 和 member/operator/values 字段")
 			}
@@ -186,7 +304,6 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 				}
 			}
 			if len(orClauses) > 0 {
-				// or 条件如含 measure 子句放 HAVING，否则 WHERE
 				hasMeasure := false
 				for _, sub := range filter.Or {
 					if isMeasure(sub.Member) {
@@ -218,9 +335,14 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		}
 	}
 
-	// timeDimensions
+	// timeDimensions — 仅对未下推的维度生成外层 WHERE 条件。
+	// 已下推到子查询的维度不再重复过滤，避免在聚合后的列（如 max_ts）上做冗余判断。
 	for _, td := range req.TimeDimensions {
 		_, fieldName, subKey := splitMemberName(td.Dimension)
+		// 已下推到子查询 → 跳过外层
+		if preAggResult.pushedDown[fieldName] {
+			continue
+		}
 		field, ok := cube.GetField(fieldName, subKey)
 		if !ok || td.DateRange.V == nil {
 			continue
@@ -229,7 +351,7 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		case []string:
 			if len(v) == 2 {
 				where = append(where, fmt.Sprintf("%s >= ? AND %s <= ?", field.SQL, field.SQL))
-				whereParams = append(whereParams, v[0], v[1])
+				whereParams = append(whereParams, normalizeDateTime(v[0]), normalizeDateTime(v[1]))
 			}
 		case string:
 			if v != "" {
@@ -247,41 +369,44 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		sql.WriteString(strings.Join(where, " AND "))
 	}
 
-	// GROUP BY
+	// ── GROUP BY ───────────────────────────────────────────────────────────
 	if len(req.Measures) > 0 && (len(req.Dimensions) > 0 || len(granCols) > 0) {
 		sql.WriteString(" GROUP BY ")
 		groupFirst := true
 		for _, dim := range req.Dimensions {
-			if !groupFirst {
-				sql.WriteString(", ")
+			if _, ok := memberInSelect[dim]; ok {
+				if !groupFirst {
+					sql.WriteString(", ")
+				}
+				fmt.Fprintf(&sql, "\"%s\"", dim)
+				groupFirst = false
 			}
-			_, fieldName, subKey := splitMemberName(dim)
-			if field, ok := cube.GetField(fieldName, subKey); ok {
-				sql.WriteString(field.SQL)
-			} else {
-				sql.WriteString(dim)
-			}
-			groupFirst = false
 		}
 		for _, gc := range granCols {
-			if !groupFirst {
-				sql.WriteString(", ")
+			if _, ok := memberInSelect[gc.alias]; ok {
+				if !groupFirst {
+					sql.WriteString(", ")
+				}
+				fmt.Fprintf(&sql, "\"%s\"", gc.alias)
+				groupFirst = false
 			}
-			sql.WriteString(gc.expr)
-			groupFirst = false
 		}
 	}
 
-	// HAVING
+	// ── HAVING ─────────────────────────────────────────────────────────────
 	if len(having) > 0 {
 		sql.WriteString(" HAVING ")
 		sql.WriteString(strings.Join(having, " AND "))
 	}
 
-	// params: WHERE params first, then HAVING params — must match ? placeholder order in SQL
-	params = append(whereParams, havingParams...)
+	// ── 参数拼接 ───────────────────────────────────────────────────────────
+	// pre-agg 条件的时间值已内联到 SQL 中，不产生绑定参数。
+	// 顺序：whereParams → havingParams，与 SQL 中 ? 出现顺序一致。
+	var params []interface{}
+	params = append(params, whereParams...)
+	params = append(params, havingParams...)
 
-	// ORDER BY
+	// ── ORDER BY ───────────────────────────────────────────────────────────
 	if len(req.Order) > 0 {
 		sql.WriteString(" ORDER BY ")
 		i := 0
@@ -289,26 +414,37 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 			if i > 0 {
 				sql.WriteString(", ")
 			}
-			// If this member is a time dimension with granularity, use the truncated expr
-			granExpr := ""
-			for _, td := range req.TimeDimensions {
-				if td.Dimension == member && td.Granularity != "" {
-					if fn, ok := granularityFunc[td.Granularity]; ok {
-						_, fieldName, subKey := splitMemberName(td.Dimension)
-						if f, ok := cube.GetField(fieldName, subKey); ok {
-							granExpr = fmt.Sprintf("%s(%s)", fn, f.SQL)
+			if _, ok := memberInSelect[member]; ok {
+				// 对于含 subKey 的成员（如 AccessView.customData.UserToken），
+				// 使用原始 SQL 表达式而非带引号别名，避免 ClickHouse 解析问题。
+				_, fieldName, subKey := splitMemberName(member)
+				if subKey != "" {
+					if f, ok := cube.GetField(fieldName, subKey); ok {
+						sql.WriteString(f.SQL)
+					} else {
+						fmt.Fprintf(&sql, "\"%s\"", member)
+					}
+				} else {
+					fmt.Fprintf(&sql, "\"%s\"", member)
+				}
+			} else {
+				found := false
+				for _, gc := range granCols {
+					if strings.HasPrefix(gc.alias, member+".") {
+						if _, ok := memberInSelect[gc.alias]; ok {
+							fmt.Fprintf(&sql, "\"%s\"", gc.alias)
+							found = true
+							break
 						}
 					}
 				}
-			}
-			if granExpr != "" {
-				sql.WriteString(granExpr)
-			} else {
-				_, fieldName, subKey := splitMemberName(member)
-				if f, ok := cube.GetField(fieldName, subKey); ok {
-					sql.WriteString(f.SQL)
-				} else {
-					sql.WriteString(member)
+				if !found {
+					_, fieldName, subKey := splitMemberName(member)
+					if f, ok := cube.GetField(fieldName, subKey); ok {
+						sql.WriteString(f.SQL)
+					} else {
+						sql.WriteString(member)
+					}
 				}
 			}
 			if direction == "desc" {
@@ -318,7 +454,7 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		}
 	}
 
-	// LIMIT/OFFSET
+	// ── LIMIT / OFFSET ────────────────────────────────────────────────────
 	if req.Limit > 0 {
 		fmt.Fprintf(&sql, " LIMIT %d", req.Limit)
 	}
@@ -342,7 +478,6 @@ func validateQuery(req *QueryRequest) error {
 	return nil
 }
 
-// buildInClause 构建普通字段的 IN/NOT IN 子句
 func buildInClause(fieldSQL string, operator string, values []interface{}) (string, []interface{}) {
 	placeholders := strings.Repeat("?,", len(values))
 	placeholders = placeholders[:len(placeholders)-1]
@@ -356,9 +491,6 @@ func buildInClause(fieldSQL string, operator string, values []interface{}) (stri
 	return fmt.Sprintf("%s IN (%s)", fieldSQL, placeholders), params
 }
 
-// buildArrayClause 针对数组类型字段生成 has/hasAll/hasAny 条件
-// 单值：has(arr, ?)
-// 多值：equals -> hasAll，contains -> hasAny
 func buildArrayClause(fieldSQL string, operator string, values []interface{}) (string, []interface{}) {
 	params := make([]interface{}, len(values))
 	for i, v := range values {
@@ -381,7 +513,6 @@ func buildArrayClause(fieldSQL string, operator string, values []interface{}) (s
 	return fmt.Sprintf("%s%s(%s, [%s])", neg, fn, fieldSQL, placeholders), params
 }
 
-// operatorMap CubeJS operator -> SQL operator（用于普通字段非 equals 情况）
 var operatorMap = map[string]string{
 	"contains":    "LIKE",
 	"notContains": "NOT LIKE",
@@ -400,7 +531,6 @@ func convertOperator(op string) string {
 	return op
 }
 
-// processFilterValue 为 LIKE 类 operator 添加通配符
 func processFilterValue(value interface{}, operator string) interface{} {
 	s, ok := value.(string)
 	if !ok {
@@ -417,7 +547,6 @@ func processFilterValue(value interface{}, operator string) interface{} {
 	return value
 }
 
-// parseRelativeTimeRange 解析 "from X to Y" 格式为 ClickHouse 时间表达式对
 func parseRelativeTimeRange(s string) (string, string, bool) {
 	s = strings.TrimSpace(s)
 	switch s {
@@ -436,10 +565,15 @@ func parseRelativeTimeRange(s string) (string, string, bool) {
 	return "", "", false
 }
 
-// convertToClickHouseTimeExpr 将相对时间字符串转为 ClickHouse 表达式
+// convertToClickHouseTimeExpr 将时间字符串转为 ClickHouse 表达式。
+//  1. 关键字：now → now(), today → today(), yesterday → yesterday()
+//  2. 相对时间：15 minutes ago → now() - INTERVAL 15 MINUTE
+//  3. 绝对时间：2026-03-20T00:00:00.000 → '2026-03-20 00:00:00'
+//     自动去掉 T 分隔符和毫秒部分，用单引号包裹。
 func convertToClickHouseTimeExpr(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
-	switch s {
+	s = strings.TrimSpace(s)
+	lower := strings.ToLower(s)
+	switch lower {
 	case "now":
 		return "now()"
 	case "today":
@@ -447,17 +581,23 @@ func convertToClickHouseTimeExpr(s string) string {
 	case "yesterday":
 		return "yesterday()"
 	}
-	if strings.HasSuffix(s, " ago") {
-		if parts := strings.Fields(strings.TrimSuffix(s, " ago")); len(parts) == 2 {
+	if strings.HasSuffix(lower, " ago") {
+		if parts := strings.Fields(strings.TrimSuffix(lower, " ago")); len(parts) == 2 {
 			return fmt.Sprintf("now() - INTERVAL %s %s", parts[0], convertUnit(parts[1]))
 		}
 	}
-	if strings.HasSuffix(s, " from now") {
-		if parts := strings.Fields(strings.TrimSuffix(s, " from now")); len(parts) == 2 {
+	if strings.HasSuffix(lower, " from now") {
+		if parts := strings.Fields(strings.TrimSuffix(lower, " from now")); len(parts) == 2 {
 			return fmt.Sprintf("now() + INTERVAL %s %s", parts[0], convertUnit(parts[1]))
 		}
 	}
-	return s
+	// 绝对时间：标准化后用单引号包裹
+	// "2026-03-20T00:00:00.000" → "'2026-03-20 00:00:00'"
+	normalized := strings.Replace(s, "T", " ", 1)
+	if idx := strings.Index(normalized, "."); idx > 0 {
+		normalized = normalized[:idx]
+	}
+	return fmt.Sprintf("'%s'", normalized)
 }
 
 var unitMap = map[string]string{
@@ -473,8 +613,15 @@ func convertUnit(unit string) string {
 	return strings.ToUpper(unit)
 }
 
-// buildFilterClause 将单个非 or 的 Filter 转换为 SQL 条件片段和绑定参数。
-// 若字段不存在或条件无法生成，返回空字符串。
+// normalizeDateTime 将前端传入的时间字符串标准化为 ClickHouse DateTime 格式："2026-03-20T00:00:00.000" → "2026-03-20 00:00:00"
+func normalizeDateTime(s string) string {
+	s = strings.Replace(s, "T", " ", 1)
+	if idx := strings.Index(s, "."); idx > 0 {
+		s = s[:idx]
+	}
+	return s
+}
+
 func buildFilterClause(filter Filter, cube *model.Cube) (string, []interface{}) {
 	_, fieldName, subKey := splitMemberName(filter.Member)
 	field, ok := cube.GetField(fieldName, subKey)
@@ -482,7 +629,6 @@ func buildFilterClause(filter Filter, cube *model.Cube) (string, []interface{}) 
 		return "", nil
 	}
 
-	// set/notSet 对所有类型统一处理
 	switch filter.Operator {
 	case "set":
 		return fmt.Sprintf("notEmpty(%s)", field.SQL), nil
@@ -499,11 +645,9 @@ func buildFilterClause(filter Filter, cube *model.Cube) (string, []interface{}) 
 	}
 
 	if field.Type == "array" {
-		clause, p := buildArrayClause(field.SQL, filter.Operator, valuesArr)
-		return clause, p
+		return buildArrayClause(field.SQL, filter.Operator, valuesArr)
 	}
 
-	// 普通字段
 	if filter.Operator == "equals" || filter.Operator == "notEquals" {
 		return buildInClause(field.SQL, filter.Operator, valuesArr)
 	}

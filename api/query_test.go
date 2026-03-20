@@ -765,3 +765,464 @@ func TestBuildQuery_MeasureFilterGoesToHaving(t *testing.T) {
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+func testPreAggCube() *model.Cube {
+	return &model.Cube{
+		Name: "ApiView",
+		SQL: `SELECT org, url, method, app_name,
+       max(ts) as max_ts
+FROM (
+  SELECT org, ts, url, method
+  FROM default.access_sample_raw
+  WHERE 1=1 {time_filter}
+) AS a
+GROUP BY org, app_name, method, url`,
+		Dimensions: map[string]model.Dimension{
+			"ts":      {SQL: "if(max_ts=toDateTime(0), now(), max_ts)", Type: "time"},
+			"appName": {SQL: "app_name", Type: "string"},
+			"url":     {SQL: "url", Type: "string"},
+		},
+		Measures: map[string]model.Measure{
+			"allCount": {SQL: "uniqExact(method, app_name, url)", Type: "number"},
+		},
+		Segments: map[string]model.Segment{
+			"org": {SQL: "org = ''"},
+		},
+		PreAggregationFilters: []model.PreAggregationFilter{
+			{Dimension: "ts", TargetColumn: "ts", Placeholder: "time_filter"},
+		},
+	}
+}
+
+func TestPreAgg_AbsoluteTimeRange(t *testing.T) {
+	// 绝对时间应下推到子查询，外层 WHERE 不应出现时间条件
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		Measures:   []string{"ApiView.allCount"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "ApiView.ts",
+				DateRange: DateRange{V: []string{"2026-03-20T00:00:00.000", "2026-03-20T23:59:59.000"}},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 子查询内应包含下推的时间条件
+	if !contains(sql, "ts >= '2026-03-20 00:00:00'") {
+		t.Errorf("expected pushdown start time in subquery, got: %s", sql)
+	}
+	if !contains(sql, "ts <= '2026-03-20 23:59:59'") {
+		t.Errorf("expected pushdown end time in subquery, got: %s", sql)
+	}
+	// 占位符应被替换掉
+	if contains(sql, "{time_filter}") {
+		t.Errorf("placeholder should be replaced, got: %s", sql)
+	}
+	// 外层不应有 >= ? 绑定参数的时间条件（已下推）
+	outerIdx := strings.Index(sql, ") AS ApiView")
+	if outerIdx > 0 {
+		outerSQL := sql[outerIdx:]
+		if contains(outerSQL, ">= ?") || contains(outerSQL, "<= ?") {
+			t.Errorf("pushed-down dimension should not appear in outer WHERE, got: %s", outerSQL)
+		}
+	}
+	// 不应有绑定参数（下推时间内联，外层时间被跳过）
+	if len(params) != 0 {
+		t.Errorf("expected no bind params (all inlined), got: %v", params)
+	}
+}
+
+func TestPreAgg_RelativeTimeRange(t *testing.T) {
+	// "from 7 days ago to now" 应下推为 ClickHouse 表达式
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "ApiView.ts",
+				DateRange: DateRange{V: "from 7 days ago to now"},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains(sql, "ts >= now() - INTERVAL 7 DAY") {
+		t.Errorf("expected relative start in subquery, got: %s", sql)
+	}
+	if !contains(sql, "ts <= now()") {
+		t.Errorf("expected relative end in subquery, got: %s", sql)
+	}
+	if contains(sql, "{time_filter}") {
+		t.Errorf("placeholder should be replaced, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestPreAgg_Today(t *testing.T) {
+	// "today" 应下推为 toDate(ts) = today()
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "ApiView.ts",
+				DateRange: DateRange{V: "today"},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains(sql, "toDate(ts) = today()") {
+		t.Errorf("expected toDate(ts) = today() in subquery, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestPreAgg_ThisMonth(t *testing.T) {
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "ApiView.ts",
+				DateRange: DateRange{V: "this month"},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains(sql, "ts >= toStartOfMonth(now())") {
+		t.Errorf("expected this month start in subquery, got: %s", sql)
+	}
+	if !contains(sql, "ts <= toStartOfMonth(now() + INTERVAL 1 MONTH)") {
+		t.Errorf("expected this month end in subquery, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestPreAgg_LastMonth(t *testing.T) {
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "ApiView.ts",
+				DateRange: DateRange{V: "last month"},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains(sql, "ts >= toStartOfMonth(now() - INTERVAL 1 MONTH)") {
+		t.Errorf("expected last month start in subquery, got: %s", sql)
+	}
+	if !contains(sql, "ts <= toStartOfMonth(now())") {
+		t.Errorf("expected last month end in subquery, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestPreAgg_NoDateRange(t *testing.T) {
+	// 不传 dateRange → 占位符清除，不加任何时间过滤
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		TimeDimensions: []TimeDimension{
+			{Dimension: "ApiView.ts"},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if contains(sql, "{time_filter}") {
+		t.Errorf("placeholder should be removed, got: %s", sql)
+	}
+	// WHERE 1=1 后面不应跟任何 AND
+	if contains(sql, "WHERE 1=1 AND") {
+		t.Errorf("should not have AND after WHERE 1=1 when no dateRange, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestPreAgg_NoCube_FallsBackToOuterWhere(t *testing.T) {
+	// sql_table 类型的 cube（无 PreAggregationFilters）
+	// 时间条件应出现在外层 WHERE，使用 ? 绑定
+	cube := testCube() // 无 PreAggregationFilters
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.ts"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "AccessView.ts",
+				DateRange: DateRange{V: []string{"2024-01-01", "2024-01-31"}},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, cube)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains(sql, "ts >= ?") || !contains(sql, "ts <= ?") {
+		t.Errorf("expected ? binding in outer WHERE for sql_table cube, got: %s", sql)
+	}
+	if len(params) != 2 {
+		t.Errorf("expected 2 params, got: %v", params)
+	}
+}
+
+func TestPreAgg_PushedDownSkipsOuterWhere(t *testing.T) {
+	// 验证下推后外层 WHERE 确实没有时间条件
+	req := &QueryRequest{
+		Dimensions: []string{"ApiView.appName"},
+		Measures:   []string{"ApiView.allCount"},
+		Segments:   []string{"ApiView.org"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "ApiView.ts",
+				DateRange: DateRange{V: []string{"2026-01-01T00:00:00.000", "2026-01-31T23:59:59.000"}},
+			},
+		},
+	}
+
+	sql, _, err := BuildQuery(req, testPreAggCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 找到外层 WHERE（在 AS ApiView 之后）
+	outerStart := strings.Index(sql, "AS ApiView")
+	if outerStart < 0 {
+		t.Fatalf("expected 'AS ApiView' in SQL, got: %s", sql)
+	}
+	outerSQL := sql[outerStart:]
+
+	// 外层 WHERE 应只有 segment 条件，没有时间条件
+	if contains(outerSQL, "'2026-01-01") || contains(outerSQL, "'2026-01-31") {
+		t.Errorf("outer WHERE should not contain pushed-down time literals, got: %s", outerSQL)
+	}
+	if !contains(outerSQL, "org = ''") {
+		t.Errorf("outer WHERE should still contain segment, got: %s", outerSQL)
+	}
+}
+
+func TestConvertToClickHouseTimeExpr_AbsoluteTime(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// 带 T 和毫秒
+		{"2026-03-20T00:00:00.000", "'2026-03-20 00:00:00'"},
+		{"2026-03-20T23:59:59.999", "'2026-03-20 23:59:59'"},
+		// 带 T 无毫秒
+		{"2026-03-20T12:30:00", "'2026-03-20 12:30:00'"},
+		// 已经是标准格式
+		{"2026-03-20 00:00:00", "'2026-03-20 00:00:00'"},
+		// 纯日期
+		{"2024-01-01", "'2024-01-01'"},
+	}
+	for _, c := range cases {
+		if got := convertToClickHouseTimeExpr(c.in); got != c.want {
+			t.Errorf("convertToClickHouseTimeExpr(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestNormalizeDateTime(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"2026-03-20T00:00:00.000", "2026-03-20 00:00:00"},
+		{"2026-03-20T23:59:59.999", "2026-03-20 23:59:59"},
+		{"2026-03-20T12:30:00", "2026-03-20 12:30:00"},
+		{"2026-03-20 00:00:00", "2026-03-20 00:00:00"},
+		{"2024-01-01", "2024-01-01"},
+	}
+	for _, c := range cases {
+		if got := normalizeDateTime(c.in); got != c.want {
+			t.Errorf("normalizeDateTime(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestBuildQuery_Granularity(t *testing.T) {
+	req := &QueryRequest{
+		Measures: []string{"AccessView.count"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension:   "AccessView.ts",
+				DateRange:   DateRange{V: "from 7 days ago to now"},
+				Granularity: "day",
+			},
+		},
+	}
+
+	sql, _, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// SELECT 中应有 toStartOfDay(ts) AS "AccessView.ts.day"
+	if !contains(sql, `toStartOfDay(ts) AS "AccessView.ts.day"`) {
+		t.Errorf("expected granularity column in SELECT, got: %s", sql)
+	}
+	// GROUP BY 中应引用该别名
+	if !contains(sql, `"AccessView.ts.day"`) {
+		t.Errorf("expected granularity alias in GROUP BY, got: %s", sql)
+	}
+}
+
+func TestBuildQuery_GranularityOrderBy(t *testing.T) {
+	// ORDER BY 中 member 为 "AccessView.ts"，应匹配到 granularity alias "AccessView.ts.day"
+	req := &QueryRequest{
+		Measures: []string{"AccessView.count"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension:   "AccessView.ts",
+				DateRange:   DateRange{V: "from 7 days ago to now"},
+				Granularity: "day",
+			},
+		},
+		Order: OrderMap{"AccessView.ts": "desc"},
+	}
+
+	sql, _, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains(sql, `"AccessView.ts.day" DESC`) {
+		t.Errorf("expected granularity alias in ORDER BY, got: %s", sql)
+	}
+}
+
+func TestBuildQuery_TimeDimensionToday(t *testing.T) {
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.ts"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "AccessView.ts",
+				DateRange: DateRange{V: "today"},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(sql, "toDate(ts) = today()") {
+		t.Errorf("expected toDate(ts) = today(), got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestBuildQuery_TimeDimensionNilDateRange(t *testing.T) {
+	// dateRange 为 nil，不应生成任何时间条件
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.ts"},
+		TimeDimensions: []TimeDimension{
+			{Dimension: "AccessView.ts"},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if contains(sql, "WHERE") {
+		t.Errorf("should not have WHERE when dateRange is nil, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestBuildQuery_EmptyStringDateRange(t *testing.T) {
+	// dateRange 为空字符串，不应生成时间条件
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.ts"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "AccessView.ts",
+				DateRange: DateRange{V: ""},
+			},
+		},
+	}
+
+	sql, params, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if contains(sql, "WHERE") {
+		t.Errorf("should not have WHERE for empty dateRange, got: %s", sql)
+	}
+	if len(params) != 0 {
+		t.Errorf("expected no params, got: %v", params)
+	}
+}
+
+func TestBuildQuery_OffsetOnly(t *testing.T) {
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.id"},
+		Limit:      10,
+		Offset:     20,
+	}
+
+	sql, _, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(sql, "LIMIT 10") {
+		t.Errorf("expected LIMIT 10, got: %s", sql)
+	}
+	if !contains(sql, "OFFSET 20") {
+		t.Errorf("expected OFFSET 20, got: %s", sql)
+	}
+}
+
+func TestBuildQuery_NoDimensionsNoMeasures_SelectsOne(t *testing.T) {
+	// 只有 timeDimension，没有显式 dimension/measure
+	req := &QueryRequest{
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "AccessView.ts",
+				DateRange: DateRange{V: "today"},
+			},
+		},
+	}
+
+	sql, _, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(sql, "SELECT 1 FROM") {
+		t.Errorf("expected SELECT 1 when no dimensions/measures, got: %s", sql)
+	}
+}
