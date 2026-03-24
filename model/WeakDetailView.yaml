@@ -1,0 +1,74 @@
+cube:
+  name: WeakDetailView
+  sql_table: weak
+
+  segments:
+    org:
+      sql: org = ''
+
+  dimensions:
+    id:
+      sql: id
+      primary_key: true
+      type: string
+      title: 请求ID
+
+    ts:
+      sql: last_time
+      type: time
+      title: 最后一次出现时间
+
+    host:
+      sql: host
+      type: string
+      title: 域名
+
+    urlRoute:
+      sql: url
+      type: string
+      title: URL路由
+
+    method:
+      sql: method
+      type: string
+      title: 请求方式
+
+    defectId:
+      sql: weak_name
+      type: string
+      title: 检测弱点
+
+    evidence:
+      sql: weak_data['evidence']
+      type: string
+      title: 弱点证据
+
+    reqDefectKey:
+      sql: weak_data['req_defect_key']
+      type: string
+      title: 请求侧弱点数据的路径
+
+    resDefectKey:
+      sql: weak_data['res_defect_key']
+      type: string
+      title: 响应侧弱点数据的路径
+
+    reqDefectVal:
+      sql: weak_data['req_defect_val']
+      type: string
+      title: 请求侧弱点数据的值
+
+    resDefectVal:
+      sql: weak_data['res_defect_val']
+      type: string
+      title: 响应侧弱点数据的值
+
+    request:
+      sql: weak_data['request']
+      type: string
+      title: 请求报文
+
+    response:
+      sql: weak_data['response']
+      type: string
+      title: 响应报文

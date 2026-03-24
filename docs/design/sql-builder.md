@@ -52,9 +52,9 @@ segments 直接将 `segment.SQL` 追加到 WHERE，无参数绑定。
 
 ### GROUP BY
 
-请求包含 measures 时生成。使用 `field.SQL`（原始表达式），不使用 SELECT 别名，兼容 ClickHouse 语义。
+请求包含 measures 且同时有 dimensions 或带 granularity 的时间维度时生成。使用 `field.SQL`（原始表达式），不使用 SELECT 别名，兼容 ClickHouse 语义。
 
-无 dimensions / granularity 时生成空 GROUP BY（`GROUP BY`），ClickHouse 对聚合函数做全表聚合。
+仅有 measures、无任何 dimensions / granularity 时，不生成 GROUP BY——ClickHouse 对聚合函数做全表聚合，无需显式 GROUP BY。
 
 ### ORDER BY
 

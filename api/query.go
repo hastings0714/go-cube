@@ -300,8 +300,8 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		sql.WriteString(strings.Join(where, " AND "))
 	}
 
-	// GROUP BY
-	if len(req.Measures) > 0 {
+	// 有 measures 且有 dimension/granularity 时才拼 GROUP BY；纯 measures 做全表聚合，空 GROUP BY 在 ClickHouse 会报语法错误
+	if len(req.Measures) > 0 && (len(req.Dimensions) > 0 || len(granByDim) > 0) {
 		sql.WriteString(" GROUP BY ")
 		groupFirst := true
 		for _, dim := range req.Dimensions {

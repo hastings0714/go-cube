@@ -70,6 +70,26 @@ func TestBuildQuery_MeasuresWithGroupBy(t *testing.T) {
 	}
 }
 
+func TestBuildQuery_MeasuresOnlyNoGroupBy(t *testing.T) {
+	// measures only, no dimensions, no timeDimensions — full-table aggregate
+	// GROUP BY must NOT be present (ClickHouse syntax error on empty GROUP BY)
+	req := &QueryRequest{
+		Measures: []string{"AccessView.count"},
+	}
+
+	sql, _, err := BuildQuery(req, testCube())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if contains(sql, "GROUP BY") {
+		t.Errorf("expected no GROUP BY for measures-only query, got: %s", sql)
+	}
+	if !contains(sql, "count()") {
+		t.Errorf("expected count() in SELECT, got: %s", sql)
+	}
+}
+
 func TestBuildQuery_FilterEquals(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},

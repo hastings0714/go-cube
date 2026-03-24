@@ -131,6 +131,16 @@ cube:
       type: string
       title: 网络域
 
+    target:
+      sql: "concat(weak_name, '-', host, '-', method, '-', url)"
+      type: string
+      title: Target
+
+    analysis:
+      sql: weak_data['analysis']
+      type: string
+      title: AI分析
+
   measures:
     riskCount:
       sql: count()
@@ -176,3 +186,8 @@ cube:
       sql: "sumMapIf(([dictGetString('weak_dict', 'owasp_top10', weak_name)],[1]), if(coalesce(tag,'')='', if(first_time>=today(), 'first', 'repeated'), if(tag='fix' AND last_time > toUnixTimestamp(add_time), 'reproduced', coalesce(tag,'')))<>'ignore' AND dictGetString('weak_dict', 'owasp_top10', weak_name) != '')"
       type: number
       title: OWASP Top 10 分类统计
+
+    lastWeakAnalysis:
+      sql: argMax(weak_data['analysis'], last_time)
+      type: string
+      title: 最新弱点分析

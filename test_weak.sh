@@ -67,6 +67,33 @@ result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22ungrouped%22%3Atrue%2C%
 check "弱点明细列表 ungrouped 15 dims order weakScore+last desc limit 20" "$result"
 
 echo ""
+echo "========================================"
+echo "=== WeakView AI分析字段 ==="
+echo "========================================"
+
+echo ""
+echo "=== 4. AI弱点分析: lastWeakAnalysis measure, filter by target, segment org ==="
+# measures: lastWeakAnalysis
+# filters: target equals [XSS注入请求漏洞检测(MAX版)-172.31.36.181-GET-/invoker/JMXInvokerServlet/vulnerabilities/xss_r/]
+# segments: org
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%5B%22WeakView.lastWeakAnalysis%22%5D%2C%22filters%22%3A%5B%7B%22member%22%3A%22WeakView.target%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22XSS%E6%B3%A8%E5%85%A5%E8%AF%B7%E6%B1%82%E6%BC%8F%E6%B4%9E%E6%A3%80%E6%B5%8B%28MAX%E7%89%88%29-172.31.36.181-GET-%2Finvoker%2FJMXInvokerServlet%2Fvulnerabilities%2Fxss_r%2F%22%5D%7D%5D%2C%22dimensions%22%3A%5B%5D%2C%22segments%22%3A%5B%22WeakView.org%22%5D%2C%22timezone%22%3A%22Asia%2FShanghai%22%7D")
+check "WeakView lastWeakAnalysis by target" "$result"
+
+echo ""
+echo "========================================"
+echo "=== WeakDetailView ==="
+echo "========================================"
+
+echo ""
+echo "=== 5. 弱点明细: ungrouped, 9 dims, 4 filters, order ts desc, limit 3, segment org ==="
+# ungrouped: true, no measures
+# dimensions: id, ts, evidence, request, response, reqDefectKey, resDefectKey, reqDefectVal, resDefectVal
+# filters: defectId=XSS注入..., host=172.31.36.181, method=GET, urlRoute=/invoker/...
+# order: ts desc, limit: 3, segments: org
+result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22ungrouped%22%3A%20true%2C%20%22measures%22%3A%20%5B%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22WeakDetailView.ts%22%7D%5D%2C%20%22order%22%3A%20%7B%22WeakDetailView.ts%22%3A%20%22desc%22%7D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22WeakDetailView.defectId%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22XSS%E6%B3%A8%E5%85%A5%E8%AF%B7%E6%B1%82%E6%BC%8F%E6%B4%9E%E6%A3%80%E6%B5%8B%28MAX%E7%89%88%29%22%5D%7D%2C%20%7B%22member%22%3A%20%22WeakDetailView.host%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22172.31.36.181%22%5D%7D%2C%20%7B%22member%22%3A%20%22WeakDetailView.method%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22GET%22%5D%7D%2C%20%7B%22member%22%3A%20%22WeakDetailView.urlRoute%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22%2Finvoker%2FJMXInvokerServlet%2Fvulnerabilities%2Fxss_r%2F%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22WeakDetailView.id%22%2C%20%22WeakDetailView.ts%22%2C%20%22WeakDetailView.evidence%22%2C%20%22WeakDetailView.request%22%2C%20%22WeakDetailView.response%22%2C%20%22WeakDetailView.reqDefectKey%22%2C%20%22WeakDetailView.resDefectKey%22%2C%20%22WeakDetailView.reqDefectVal%22%2C%20%22WeakDetailView.resDefectVal%22%5D%2C%20%22limit%22%3A%203%2C%20%22segments%22%3A%20%5B%22WeakDetailView.org%22%5D%2C%20%22timezone%22%3A%20%22Asia%2FShanghai%22%7D")
+check "WeakDetailView ungrouped 9 dims 4 filters limit 3" "$result"
+
+echo ""
 echo "--- $pass passed, $fail failed ---"
 
 echo ""
