@@ -8,7 +8,7 @@ cube:
 
   dimensions:
     id:
-      sql: weak_data['id']
+      sql: weak_data.1
       primary_key: true
       type: string
       title: 请求ID
@@ -39,36 +39,36 @@ cube:
       title: 检测弱点
 
     evidence:
-      sql: weak_data['evidence']
+      sql: weak_data.2[1]
       type: string
       title: 弱点证据
 
     reqDefectKey:
-      sql: weak_data['req_defect_key']
+      sql: weak_data.2[2]
       type: string
       title: 请求侧弱点数据的路径
 
     resDefectKey:
-      sql: weak_data['res_defect_key']
+      sql: weak_data.2[2]
       type: string
       title: 响应侧弱点数据的路径
 
     reqDefectVal:
-      sql: weak_data['req_defect_val']
+      sql: weak_data.2[2]
       type: string
       title: 请求侧弱点数据的值
 
     resDefectVal:
-      sql: weak_data['res_defect_val']
+      sql: weak_data.2[2]
       type: string
       title: 响应侧弱点数据的值
 
     request:
-      sql: weak_data['request']
+      sql: req
       type: string
       title: 请求报文
 
     response:
-      sql: weak_data['response']
+      sql: res
       type: string
       title: 响应报文
