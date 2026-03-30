@@ -1,6 +1,6 @@
 cube:
   name: UserAuthView
-  sql_table: user_auth
+  sql_table: user_auth FINAL
 
   segments:
     org:
@@ -39,6 +39,16 @@ cube:
       sql: last_ts
       type: time
       title: 最近时间
+
+    authKey:
+      sql: arrayJoin(auth_info).4
+      type: string
+      title: 鉴权Key
+
+    authApp:
+      sql: "multiIf(notEmpty(dictGet(host_dict, 'info', assumeNotNull(arrayJoin(auth_info).1))), arrayFirst(x -> startsWith(assumeNotNull(url), x[1]), dictGet(host_dict, 'info', assumeNotNull(arrayJoin(auth_info).1)))[2], notEmpty(dictGet(host_dict, 'info', concat(splitByRegexp(':\\d+$', assumeNotNull(arrayJoin(auth_info).1))[1], ':*'))), arrayFirst(x -> startsWith(assumeNotNull(url), x[1]), dictGet(host_dict, 'info', concat(splitByRegexp(':\\d+$', assumeNotNull(arrayJoin(auth_info).1))[1], ':*')))[2], arrayJoin(auth_info).1)"
+      type: string
+      title: 鉴权应用
 
   measures:
     basInfo:
@@ -80,3 +90,18 @@ cube:
       sql: sum(count)
       type: number
       title: 访问次数
+
+    authInfo:
+      sql: argMax(auth_info, info.1)
+      type: string
+      title: 鉴权信息
+
+    apiNum:
+      sql: uniq(concat(arrayJoin(auth_info).2, arrayJoin(auth_info).3))
+      type: number
+      title: 关联API数
+
+    aggAuthKey:
+      sql: groupUniqArray(arrayJoin(auth_info).4)
+      type: string
+      title: 聚合鉴权Key
