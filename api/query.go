@@ -208,8 +208,6 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		sql.WriteString("1")
 	}
 
-	// FROM（延迟写入，等 timeDimensions 循环替换占位符后再拼）
-	fromSQL := cube.GetSQLTable()
 	sql.WriteString(" FROM ")
 
 	// PREWHERE / WHERE / HAVING
@@ -248,6 +246,7 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 	}
 
 	// segments 全部走 PREWHERE，applyVars 返回空串时跳过
+	fromSQL := applyVars(cube.GetSQLTable())
 	for _, seg := range req.Segments {
 		_, segName, _ := splitMemberName(seg)
 		s, ok := cube.Segments[segName]
