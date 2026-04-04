@@ -1,0 +1,182 @@
+cube:
+  name: ApiDayView
+  sql: |
+    SELECT * FROM access_api_day WHERE {filter.dt}
+
+  dimensions:
+    dt:
+      sql: dt
+      type: time
+      title: 日期
+
+    host:
+      sql: host
+      type: string
+      title: 域名
+
+    channel:
+      sql: channel
+      type: string
+      title: 站点
+
+    appName:
+      sql: if(channel='default' or channel='', host, channel)
+      type: string
+      title: 应用
+
+    method:
+      sql: method
+      type: string
+      title: 请求方式
+
+    urlRoute:
+      sql: url
+      type: string
+      title: URL路由
+
+    api:
+      sql: method || ' ' || if(channel='default' or channel='', host, channel) || url
+      type: string
+      primary_key: true
+      title: API
+
+    risk:
+      sql: arrayJoin(arrayFilter(x -> dictGetInt64('default.risk_dict','score',x.1)!=0, arrayMap((x, y) -> (x, y), risk_count.1, risk_count.2))).1
+      type: string
+      title: 风险
+
+    resSens:
+      sql: arrayJoin(arrayMap(x -> (x, finalizeAggregation(res_sens_uniq)[x]), mapKeys(finalizeAggregation(res_sens_uniq)))).1
+      type: string
+      title: 响应敏感
+
+    hasResSens:
+      sql: length(finalizeAggregation(res_sens_uniq))
+      type: number
+      title: 是否响应涉敏
+
+    hasReqSens:
+      sql: length(finalizeAggregation(req_sens_uniq))
+      type: number
+      title: 是否请求涉敏
+
+    status:
+      sql: arrayJoin(arrayMap((x, y) -> (x, y), status_count.1, status_count.2)).1
+      type: string
+      title: 状态码
+
+  measures:
+    count:
+      sql: sum(count)
+      type: number
+      title: 访问量
+
+    protectCount:
+      sql: sum(upstream_count.2[indexOf(upstream_count.1, 'protect')])
+      type: number
+      title: 保护次数
+
+    riskTuple:
+      sql: arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2))
+      type: string
+      title: 风险元组
+
+    riskSumMap:
+      sql: sumMap(arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).1, arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).2)
+      type: string
+      title: 风险累加
+
+    aggRiskScore:
+      sql: "multiIf(arrayExists(x -> dictGetInt64('default.risk_dict', 'score', x) = -100, sumMap(arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).1, arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).2).1), -100, notEmpty(sumMap(arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).1, arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).2).1), 100-100*arrayProduct(arrayMap(x -> 1-0.01*dictGetInt64('default.risk_dict','score',x), sumMap(arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).1, arrayFilter(x -> dictGetInt64('default.risk_dict', 'score', x.1) > 0, arrayZip(risk_count.1, risk_count.2)).2).1)), 0)"
+      type: number
+      title: 聚合风险评分
+
+    reqSensUniqMap:
+      sql: uniqMapMerge(req_sens_uniq)
+      type: string
+      title: 请求涉敏Map
+
+    resSensUniqMap:
+      sql: uniqMapMerge(res_sens_uniq)
+      type: string
+      title: 响应涉敏Map
+
+    reqSensTuple:
+      sql: (mapKeys(uniqMapMerge(req_sens_uniq)), mapValues(uniqMapMerge(req_sens_uniq)))
+      type: string
+      title: 请求涉敏元组
+
+    resSensTuple:
+      sql: (mapKeys(uniqMapMerge(res_sens_uniq)), mapValues(uniqMapMerge(res_sens_uniq)))
+      type: string
+      title: 响应涉敏元组
+
+    aggResSensScore:
+      sql: "if(notEmpty(mapKeys(uniqMapMerge(res_sens_uniq))), 100-100*arrayProduct(arrayMap(x -> 1-0.01*dictGetInt64('default.privacy_dict','score',x), mapKeys(uniqMapMerge(res_sens_uniq)))), 0)"
+      type: number
+      title: 聚合响应敏感评分
+
+    resSensCount:
+      sql: arrayJoin(arrayMap(x -> (x, uniqMapMerge(res_sens_uniq)[x]), mapKeys(uniqMapMerge(res_sens_uniq)))).2
+      type: number
+      title: 响应涉敏数
+
+    statusSumMap:
+      sql: sumMap(status_count)
+      type: number
+      title: 状态码累加
+
+    hourSumMap:
+      sql: sumMap(hour_count)
+      type: number
+      title: 小时累加
+
+    minSumMap:
+      sql: sumMap(hour_count)
+      type: number
+      title: 分钟累加
+
+    minCountAvg:
+      sql: arrayAvg(sumMap(hour_count).2)
+      type: number
+      title: 分钟平均
+
+    minCountStddev:
+      sql: sqrt(arraySum(arrayMap(x -> (x - arrayAvg(sumMap(hour_count).2)) * (x - arrayAvg(sumMap(hour_count).2)), sumMap(hour_count).2)) / (length(sumMap(hour_count).2) - 1))
+      type: number
+      title: 分钟标准差
+
+    minZscoreArray:
+      sql: arrayMap(x -> (x - arrayAvg(sumMap(hour_count).2)) / sqrt(arraySum(arrayMap(y -> (y - arrayAvg(sumMap(hour_count).2)) * (y - arrayAvg(sumMap(hour_count).2)), sumMap(hour_count).2)) / (length(sumMap(hour_count).2) - 1)), sumMap(hour_count).2)
+      type: number
+      title: 分钟Z-Score
+
+    minCountToday:
+      sql: arrayZip(sumMapIf(hour_count, dt=today()).1, sumMapIf(hour_count, dt=today()).2)
+      type: number
+      title: 今日分钟级访问
+
+    minCountPredictArray:
+      sql: arrayMap(x->if(x.1 > hour(now())*60+minute(now()),(toUnixTimestamp(toStartOfDay(now()))+x.1*60,x.2/uniqHLL12(dt)-1),(toUnixTimestamp(toStartOfDay(now()))+x.1*60,x.2/uniqHLL12(dt))), arrayZip(sumMap((arrayMap(x->hour(toDateTime(x))*60+minute(toDateTime(x)), hour_count.1), hour_count.2)).1, sumMap((arrayMap(x->hour(toDateTime(x))*60+minute(toDateTime(x)), hour_count.1), hour_count.2)).2))
+      type: number
+      title: 分钟级预测
+
+    newRiskToday:
+      sql: arrayFilter(x->not has(sumMapIf(risk_count, dt=yesterday()).1, x.1), arrayZip(sumMapIf(risk_count, dt=today()).1, sumMapIf(risk_count, dt=today()).2))
+      type: string
+      title: 今日新增风险
+
+    highRiskRatioToday:
+      sql: arrayFilter(x-> x.2 > 2, arrayMap(x -> (x, mapFromArrays(sumMapIf(risk_count, dt=today()).1, sumMapIf(risk_count, dt=today()).2)[x] / (100 + mapFromArrays(sumMapIf(risk_count, dt=today()-1).1, sumMapIf(risk_count, dt=today()-1).2)[x])), arrayFilter(x->has(sumMapIf(risk_count, dt=yesterday()).1, x), sumMapIf(risk_count, dt=today()).1)))
+      type: string
+      title: 高环比风险
+
+    newWeakToday:
+      sql: arrayFilter(x->not has(sumMapIf(weak_count, dt=yesterday()).1, x), sumMapIf(weak_count, dt=yesterday()).1)
+      type: string
+      title: 今日新增弱点
+
+    newSensToday:
+      sql: arrayFilter(x->not has(mapKeys(uniqMapMergeIf(res_sens_uniq, dt=yesterday())), x), mapKeys(uniqMapMergeIf(res_sens_uniq, dt=today())))
+      type: string
+      title: 今日新增敏感

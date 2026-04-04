@@ -122,6 +122,83 @@ result=$(curl -s "$BASE/load?query=%7B%22renewQuery%22%3Afalse%2C%22measures%22%
 echo "Raw: $result"
 check "ApiView 应用列表使用hostUrl过滤" "$result"
 
+echo ""
+echo "=== 15. ApiDayView protectCount by dt (7天) ==="
+#{"measures":["ApiDayView.protectCount"],"timeDimensions":[{"dimension":"ApiDayView.dt","granularity":"day","dateRange":"from 7 days ago to now"}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.protectCount%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22granularity%22%3A%20%22day%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView protectCount by dt (7天)" "$result"
+
+echo ""
+echo "=== 16. ApiDayView count by urlRoute/channel/host/method (limit 20) ==="
+#{"measures":["ApiDayView.count"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"dimensions":["ApiDayView.urlRoute","ApiDayView.channel","ApiDayView.host","ApiDayView.method"],"order":{"ApiDayView.count":"desc"},"limit":20,"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.count%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22dimensions%22%3A%20%5B%22ApiDayView.urlRoute%22%2C%20%22ApiDayView.channel%22%2C%20%22ApiDayView.host%22%2C%20%22ApiDayView.method%22%5D%2C%20%22order%22%3A%20%7B%22ApiDayView.count%22%3A%20%22desc%22%7D%2C%20%22limit%22%3A%2020%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView count by urlRoute/channel/host/method (limit 20)" "$result"
+
+echo ""
+echo "=== 17. ApiDayView 汇总 hourSumMap+riskSumMap+count+reqSensTuple+resSensTuple ==="
+#{"measures":["ApiDayView.hourSumMap","ApiDayView.riskSumMap","ApiDayView.count","ApiDayView.reqSensTuple","ApiDayView.resSensTuple"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.hourSumMap%22%2C%20%22ApiDayView.riskSumMap%22%2C%20%22ApiDayView.count%22%2C%20%22ApiDayView.reqSensTuple%22%2C%20%22ApiDayView.resSensTuple%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView 汇总 hourSumMap+riskSumMap+count+reqSensTuple+resSensTuple" "$result"
+
+echo ""
+echo "=== 18. ApiDayView aggResSensScore+resSensCount by resSens/host/method/urlRoute (filter appName+hasResSens) ==="
+#{"measures":["ApiDayView.aggResSensScore","ApiDayView.resSensCount"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"filters":[{"member":"ApiDayView.appName","operator":"equals","values":["脱敏测试"]},{"member":"ApiDayView.hasResSens","operator":"equals","values":["1"]}],"dimensions":["ApiDayView.resSens","ApiDayView.host","ApiDayView.method","ApiDayView.urlRoute"],"order":{"ApiDayView.aggResSensScore":"desc"},"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.aggResSensScore%22%2C%20%22ApiDayView.resSensCount%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.appName%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22%E8%84%B1%E6%95%8F%E6%B5%8B%E8%AF%95%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.hasResSens%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%221%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22ApiDayView.resSens%22%2C%20%22ApiDayView.host%22%2C%20%22ApiDayView.method%22%2C%20%22ApiDayView.urlRoute%22%5D%2C%20%22order%22%3A%20%7B%22ApiDayView.aggResSensScore%22%3A%20%22desc%22%7D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView aggResSensScore+resSensCount by resSens/host/method/urlRoute" "$result"
+
+echo ""
+echo "=== 19. ApiDayView newRiskToday+highRiskRatioToday+newWeakToday+newSensToday (filter appName) ==="
+#{"measures":["ApiDayView.newRiskToday","ApiDayView.highRiskRatioToday","ApiDayView.newWeakToday","ApiDayView.newSensToday"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"today"}],"filters":[{"member":"ApiDayView.appName","operator":"equals","values":["脱敏测试"]}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.newRiskToday%22%2C%20%22ApiDayView.highRiskRatioToday%22%2C%20%22ApiDayView.newWeakToday%22%2C%20%22ApiDayView.newSensToday%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22today%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.appName%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22%E8%84%B1%E6%95%8F%E6%B5%8B%E8%AF%95%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView newRiskToday+highRiskRatioToday+newWeakToday+newSensToday" "$result"
+
+echo ""
+echo "=== 20. ApiDayView aggRiskScore+count+riskSumMap by host/method/urlRoute (filter aggRiskScore>=95, limit 5) ==="
+#{"measures":["ApiDayView.aggRiskScore","ApiDayView.count","ApiDayView.riskSumMap"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"filters":[{"member":"ApiDayView.aggRiskScore","operator":"gte","values":["95"]}],"dimensions":["ApiDayView.host","ApiDayView.method","ApiDayView.urlRoute"],"order":{"ApiDayView.aggRiskScore":"desc"},"limit":5,"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.aggRiskScore%22%2C%20%22ApiDayView.count%22%2C%20%22ApiDayView.riskSumMap%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.aggRiskScore%22%2C%20%22operator%22%3A%20%22gte%22%2C%20%22values%22%3A%20%5B%2295%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%22ApiDayView.host%22%2C%20%22ApiDayView.method%22%2C%20%22ApiDayView.urlRoute%22%5D%2C%20%22order%22%3A%20%7B%22ApiDayView.aggRiskScore%22%3A%20%22desc%22%7D%2C%20%22limit%22%3A%205%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView aggRiskScore+count+riskSumMap by host/method/urlRoute (aggRiskScore>=95, limit 5)" "$result"
+
+echo ""
+echo "=== 21. ApiDayView 路由汇总 hourSumMap+riskSumMap+reqSensTuple+resSensTuple+statusSumMap+count (filter urlRoute+method+host) ==="
+#{"measures":["ApiDayView.hourSumMap","ApiDayView.riskSumMap","ApiDayView.reqSensTuple","ApiDayView.resSensTuple","ApiDayView.statusSumMap","ApiDayView.count"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"filters":[{"member":"ApiDayView.urlRoute","operator":"equals","values":["/apiAuth"]},{"member":"ApiDayView.method","operator":"equals","values":["POST"]},{"member":"ApiDayView.host","operator":"equals","values":["127.0.0.1"]}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.hourSumMap%22%2C%20%22ApiDayView.riskSumMap%22%2C%20%22ApiDayView.reqSensTuple%22%2C%20%22ApiDayView.resSensTuple%22%2C%20%22ApiDayView.statusSumMap%22%2C%20%22ApiDayView.count%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.urlRoute%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22/apiAuth%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.method%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22POST%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.host%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22127.0.0.1%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView 路由汇总 hourSumMap+riskSumMap+reqSensTuple+resSensTuple+statusSumMap+count" "$result"
+
+echo ""
+echo "=== 22. ApiDayView count+riskSumMap+reqSensTuple+resSensTuple+statusSumMap by dt (filter urlRoute+method+host) ==="
+#{"measures":["ApiDayView.count","ApiDayView.riskSumMap","ApiDayView.reqSensTuple","ApiDayView.resSensTuple","ApiDayView.statusSumMap"],"timeDimensions":[{"dimension":"ApiDayView.dt","granularity":"day","dateRange":"from 7 days ago to now"}],"filters":[{"member":"ApiDayView.urlRoute","operator":"equals","values":["/apiAuth"]},{"member":"ApiDayView.method","operator":"equals","values":["POST"]},{"member":"ApiDayView.host","operator":"equals","values":["127.0.0.1"]}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.count%22%2C%20%22ApiDayView.riskSumMap%22%2C%20%22ApiDayView.reqSensTuple%22%2C%20%22ApiDayView.resSensTuple%22%2C%20%22ApiDayView.statusSumMap%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22granularity%22%3A%20%22day%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.urlRoute%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22/apiAuth%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.method%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22POST%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.host%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22127.0.0.1%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView count+riskSumMap+reqSensTuple+resSensTuple+statusSumMap by dt" "$result"
+
+echo ""
+echo "=== 23. ApiDayView minSumMap+minCountAvg+minCountStddev+minZscoreArray (filter host+urlRoute+method) ==="
+#{"measures":["ApiDayView.minSumMap","ApiDayView.minCountAvg","ApiDayView.minCountStddev","ApiDayView.minZscoreArray"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"filters":[{"member":"ApiDayView.host","operator":"equals","values":["127.0.0.1"]},{"member":"ApiDayView.urlRoute","operator":"equals","values":["/apiAuth"]},{"member":"ApiDayView.method","operator":"equals","values":["POST"]}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.minSumMap%22%2C%20%22ApiDayView.minCountAvg%22%2C%20%22ApiDayView.minCountStddev%22%2C%20%22ApiDayView.minZscoreArray%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.host%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22127.0.0.1%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.urlRoute%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22/apiAuth%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.method%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22POST%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView minSumMap+minCountAvg+minCountStddev+minZscoreArray" "$result"
+
+echo ""
+echo "=== 24. ApiDayView minCountToday+minCountPredictArray (filter host+urlRoute+method, 3天) ==="
+#{"measures":["ApiDayView.minCountToday","ApiDayView.minCountPredictArray"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 3 days ago to now"}],"filters":[{"member":"ApiDayView.host","operator":"equals","values":["127.0.0.1"]},{"member":"ApiDayView.urlRoute","operator":"equals","values":["/apiAuth"]},{"member":"ApiDayView.method","operator":"equals","values":["POST"]}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.minCountToday%22%2C%20%22ApiDayView.minCountPredictArray%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%203%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.host%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22127.0.0.1%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.urlRoute%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22/apiAuth%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.method%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22POST%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView minCountToday+minCountPredictArray (3天)" "$result"
+
+echo ""
+echo "=== 25. ApiDayView hourSumMap (filter host+urlRoute+method, 7天) ==="
+#{"measures":["ApiDayView.hourSumMap"],"timeDimensions":[{"dimension":"ApiDayView.dt","dateRange":"from 7 days ago to now"}],"filters":[{"member":"ApiDayView.host","operator":"equals","values":["127.0.0.1"]},{"member":"ApiDayView.urlRoute","operator":"equals","values":["/apiAuth"]},{"member":"ApiDayView.method","operator":"equals","values":["POST"]}],"dimensions":[],"timezone":"Asia/Shanghai"}
+result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%20%5B%22ApiDayView.hourSumMap%22%5D%2C%20%22timeDimensions%22%3A%20%5B%7B%22dimension%22%3A%20%22ApiDayView.dt%22%2C%20%22dateRange%22%3A%20%22from%207%20days%20ago%20to%20now%22%7D%5D%2C%20%22filters%22%3A%20%5B%7B%22member%22%3A%20%22ApiDayView.host%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22127.0.0.1%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.urlRoute%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22/apiAuth%22%5D%7D%2C%20%7B%22member%22%3A%20%22ApiDayView.method%22%2C%20%22operator%22%3A%20%22equals%22%2C%20%22values%22%3A%20%5B%22POST%22%5D%7D%5D%2C%20%22dimensions%22%3A%20%5B%5D%2C%20%22timezone%22%3A%20%22Asia/Shanghai%22%7D&queryType=multi")
+echo "Raw: $result"
+check "ApiDayView hourSumMap (filter host+urlRoute+method, 7天)" "$result"
+
 echo "========================================"
 echo "Results: $pass passed, $fail failed"
 echo "========================================"
