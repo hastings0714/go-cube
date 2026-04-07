@@ -325,6 +325,8 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 			fromSQL = fromSQL[:s] + "''" + fromSQL[s+e+1:]
 		}
 	}
+	// isSubquery: cube 使用子查询时，segment 不能放 PREWHERE（仅物理表支持）
+	isSubquery := cube.SQL != ""
 	for _, seg := range req.Segments {
 		_, segName, _ := splitMemberName(seg)
 		s, ok := cube.Segments[segName]
@@ -335,7 +337,11 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 			continue
 		}
 		if result := applyVars(s.SQL); result != "" {
-			prewhere = append(prewhere, result)
+			if isSubquery {
+				where = append(where, result)
+			} else {
+				prewhere = append(prewhere, result)
+			}
 		}
 	}
 
