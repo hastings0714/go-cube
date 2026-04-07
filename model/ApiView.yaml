@@ -238,7 +238,7 @@ cube:
 
     staticTagExt:
       sql: arrayJoin(if(url_action[2] IN ('api','auto') AND notEmpty(url_action[1]), [url_action[1]], ['未分组']))
-      type: array
+      type: string
       title: 智能分组标签
 
     autoTagExt:
