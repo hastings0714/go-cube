@@ -181,6 +181,11 @@ cube:
       type: string
       title: 敏感数据名称(响应)
 
+    standard:
+      sql: "splitByChar(':', arrayJoin(splitByChar(';', assumeNotNull(dictGetString('default.privacy_dict', 'level', arrayJoin(res_sens_k))))))[1]"
+      type: string
+      title: 规范名称
+
     category:
       sql: "splitByChar(':', arrayJoin(splitByChar(';', assumeNotNull(dictGetString('default.privacy_dict', 'level', arrayJoin(res_sens_k))))))[2]"
       type: string
