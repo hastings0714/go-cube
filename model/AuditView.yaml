@@ -4,12 +4,16 @@ cube:
 
   segments:
     org:
-      sql: org = ''
+      sql: org = {vars.org}
 
-    # top segment: 取访问量最高的300个content（approx_top_sum），此处简化为恒真，
-    # 实际过滤由上层业务查询时通过 filter 传递
     top:
-      sql: 1=1
+      sql: >-
+        content GLOBAL IN (
+          SELECT arrayJoin(approx_top_sum(300, 100)(content, count)).1
+          FROM default.audit
+          WHERE org = {vars.org}
+            AND dt >= today()
+        )
 
   dimensions:
     dt:
