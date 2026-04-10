@@ -12,7 +12,13 @@ cube:
           SELECT arrayJoin(approx_top_sum(300, 100)(content, count)).1
           FROM default.audit
           WHERE org = {vars.org}
-            AND dt >= today()
+            AND {filter.dt}
+            AND {filter.channel}
+            AND {filter.type}
+            AND {filter.ipGeoCountry}
+            AND {filter.ipGeoProvince}
+            AND {filter.department}
+            AND {filter.deviceType}
         )
 
   dimensions:

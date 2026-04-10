@@ -290,16 +290,14 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		return ok
 	}
 
-	// applyVars 替换 SQL 模板中的 {vars.key}，每个值加单引号并转义；
-	// key 不存在或值为空 slice 时返回 "" 表示跳过（用于 segment）。
+	// applyVars 替换 SQL 中的 {vars.key} 和 {filter.field} 占位符。
+	// {vars.key}：有值内联带引号；key 不存在或值为空时返回 "" 跳过整个 segment。
+	// {filter.field}：有匹配内联条件；无匹配降级为 1=1。
 	applyVars := func(tmpl string) string {
 		for k, vals := range req.Vars {
 			ph := "{vars." + k + "}"
-			if !strings.Contains(tmpl, ph) {
+			if !strings.Contains(tmpl, ph) || len(vals) == 0 {
 				continue
-			}
-			if len(vals) == 0 {
-				return "" // 空 slice 整体跳过 segment
 			}
 			quoted := make([]string, len(vals))
 			for i, v := range vals {
@@ -308,22 +306,65 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 			tmpl = strings.ReplaceAll(tmpl, ph, strings.Join(quoted, ","))
 		}
 		if strings.Contains(tmpl, "{vars.") {
-			return "" // key 不存在，跳过该 segment
+			return "" // key 不存在或值为空，跳过该 segment
+		}
+		for strings.Contains(tmpl, "{filter.") {
+			s := strings.Index(tmpl, "{filter.")
+			e := strings.Index(tmpl[s:], "}")
+			if e < 0 {
+				break
+			}
+			placeholder := tmpl[s : s+e+1]
+			fieldName := placeholder[len("{filter.") : len(placeholder)-1]
+			replacement := "1=1"
+			for _, td := range req.TimeDimensions {
+				_, fn, _ := splitMemberName(td.Dimension)
+				if fn == fieldName {
+					if c := buildTimeDimensionClause(fieldName, td.DateRange); c != "" {
+						replacement = c
+					}
+					break
+				}
+			}
+			if replacement == "1=1" {
+				var parts []string
+				for _, f := range req.Filters {
+					if len(f.Or) > 0 {
+						continue
+					}
+					_, fn, _ := splitMemberName(f.Member)
+					if fn == fieldName {
+						c, params := buildFilterClause(f, cube)
+						for _, p := range params {
+							c = strings.Replace(c, "?", "'"+strings.ReplaceAll(fmt.Sprintf("%v", p), "'", "''")+"'", 1)
+						}
+						if c != "" {
+							parts = append(parts, c)
+						}
+					}
+				}
+				if len(parts) > 0 {
+					replacement = strings.Join(parts, " AND ")
+				}
+			}
+			tmpl = strings.ReplaceAll(tmpl, placeholder, replacement)
 		}
 		return tmpl
 	}
 
-	// fromSQL 中未提供的占位符降级为 ''（子查询不能整体跳过）
 	fromSQL := applyVars(cube.GetSQLTable())
-	if fromSQL == "" {
-		fromSQL = cube.GetSQLTable()
-		for strings.Contains(fromSQL, "{vars.") {
-			s, e := strings.Index(fromSQL, "{vars."), 0
-			if e = strings.Index(fromSQL[s:], "}"); e < 0 {
+	// fromSQL cannot be skipped: if cube.SQL has unresolved {vars.xxx}, degrade to ''
+	if fromSQL == "" && cube.SQL != "" {
+		t := cube.GetSQLTable()
+		for strings.Contains(t, "{vars.") {
+			s := strings.Index(t, "{vars.")
+			e := strings.Index(t[s:], "}")
+			if e < 0 {
 				break
 			}
-			fromSQL = fromSQL[:s] + "''" + fromSQL[s+e+1:]
+			t = t[:s] + "''" + t[s+e+1:]
 		}
+		fromSQL = applyVars(t)
 	}
 	// isSubquery: cube 使用子查询时，segment 不能放 PREWHERE（仅物理表支持）
 	isSubquery := cube.SQL != ""
@@ -395,7 +436,7 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		}
 	}
 
-	// timeDimensions
+	// timeDimensions: 生成外层 WHERE 时间范围子句
 	for _, td := range req.TimeDimensions {
 		_, fieldName, subKey := splitMemberName(td.Dimension)
 		field, ok := cube.GetField(fieldName, subKey)
@@ -404,20 +445,7 @@ func BuildQuery(req *QueryRequest, cube *model.Cube) (string, []interface{}, err
 		}
 		if clause := buildTimeDimensionClause(field.SQL, td.DateRange); clause != "" {
 			where = append(where, clause)
-			placeholder := "{filter." + fieldName + "}"
-			if strings.Contains(fromSQL, placeholder) {
-				fromSQL = strings.ReplaceAll(fromSQL, placeholder, buildTimeDimensionClause(fieldName, td.DateRange))
-			}
 		}
-	}
-	// 没有匹配 timeDimension 的占位符，替换为 1=1（不过滤，保留全量数据）
-	if i := strings.Index(fromSQL, "{filter."); i >= 0 {
-		j := strings.Index(fromSQL[i:], "}")
-		if j < 0 {
-			return "", nil, fmt.Errorf("SQL placeholder starting at position %d is not closed (missing '}')", i)
-		}
-		placeholder := fromSQL[i : i+j+1]
-		fromSQL = strings.ReplaceAll(fromSQL, placeholder, "1=1")
 	}
 	sql.WriteString(fromSQL)
 
@@ -669,7 +697,6 @@ func buildFilterClause(filter Filter, cube *model.Cube) (string, []interface{}) 
 		return "", nil
 	}
 
-	// set/notSet 对所有类型统一处理
 	switch filter.Operator {
 	case "set":
 		return fmt.Sprintf("notEmpty(%s)", field.SQL), nil
@@ -686,15 +713,11 @@ func buildFilterClause(filter Filter, cube *model.Cube) (string, []interface{}) 
 	}
 
 	if field.Type == "array" {
-		clause, p := buildArrayClause(field.SQL, filter.Operator, valuesArr)
-		return clause, p
+		return buildArrayClause(field.SQL, filter.Operator, valuesArr)
 	}
-
-	// 普通字段
 	if filter.Operator == "equals" || filter.Operator == "notEquals" {
 		return buildInClause(field.SQL, filter.Operator, valuesArr)
 	}
-	sqlOp := convertOperator(filter.Operator)
 	value := processFilterValue(valuesArr[0], filter.Operator)
-	return fmt.Sprintf("%s %s ?", field.SQL, sqlOp), []interface{}{value}
+	return fmt.Sprintf("%s %s ?", field.SQL, convertOperator(filter.Operator)), []interface{}{value}
 }
