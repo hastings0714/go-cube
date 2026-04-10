@@ -2,13 +2,18 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
+	"github.com/Servicewall/go-cube/config"
 	"github.com/Servicewall/go-cube/model"
+	"github.com/Servicewall/go-cube/sql"
 )
 
 // testCube builds a minimal Cube fixture for unit tests.
@@ -331,22 +336,23 @@ func TestBuildQuery_BlackSegmentEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildQuery_SegmentsNoVars(t *testing.T) {
-	// 没有传 Vars 时，含占位符的 segment 被跳过，不生成 PREWHERE
+func TestBuildQuery_SegmentsOrgEmptyVar(t *testing.T) {
+	// org 传空字符串时，应生成 org = '' 的 PREWHERE
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.org"},
+		Vars:       map[string][]string{"org": {""}},
 	}
 
 	sql, _, err := BuildQuery(req, testCube())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if contains(sql, "PREWHERE") {
-		t.Errorf("expected no PREWHERE when vars not provided, got: %s", sql)
+	if !contains(sql, "PREWHERE") {
+		t.Errorf("expected PREWHERE for empty org, got: %s", sql)
 	}
-	if contains(sql, "{vars.org}") {
-		t.Errorf("unresolved placeholder should not appear in SQL, got: %s", sql)
+	if !contains(sql, "org = ''") {
+		t.Errorf("expected org = '' in PREWHERE, got: %s", sql)
 	}
 }
 
@@ -823,6 +829,60 @@ func TestHandleLoad_GetQuery(t *testing.T) {
 
 	if rr.Code == http.StatusBadRequest {
 		t.Errorf("GET ?query= should parse OK, got 400: %s", rr.Body.String())
+	}
+}
+
+func TestHandleLoad_MissingOrgHeaderGeneratesEmptyOrg(t *testing.T) {
+	modelFS := fstest.MapFS{
+		"AccessView.yaml": &fstest.MapFile{Data: []byte(`cube:
+  name: AccessView
+  sql_table: default.access
+  segments:
+    org:
+      sql: org = {vars.org}
+  dimensions:
+    id:
+      sql: id
+      type: string
+`)},
+	}
+
+	var capturedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read query body: %v", err)
+		}
+		capturedQuery = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	chClient, err := sql.NewClient(&config.ClickHouseConfig{
+		Hosts:        []string{host},
+		Database:     "default",
+		QueryTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("create clickhouse client: %v", err)
+	}
+
+	body := `{"dimensions":["AccessView.id"],"segments":["AccessView.org"],"limit":1}`
+	req := httptest.NewRequest(http.MethodPost, "/load", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h := &Handler{modelLoader: model.NewLoader(modelFS), chClient: chClient}
+	h.HandleLoad(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	// org 未传时应生成 org = ''，而非跳过 segment
+	if !contains(capturedQuery, "org = ''") {
+		t.Fatalf("expected org = '' when org header missing, got: %s", capturedQuery)
 	}
 }
 

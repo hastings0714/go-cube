@@ -101,9 +101,7 @@ func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 
 	req.Mask = r.Header.Get("X-Auth-Mask") == "true"
 	vars := map[string][]string{}
-	if org := r.Header.Get("X-Sw-Org"); org != "" {
-		vars["org"] = []string{org}
-	}
+	vars["org"] = []string{r.Header.Get("X-Sw-Org")}
 	if v := r.Header.Get("X-Sw-Api-Exact"); v != "" {
 		vars["api_exact"] = strings.Split(v, ",")
 	}
