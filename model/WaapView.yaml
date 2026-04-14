@@ -1,0 +1,99 @@
+cube:
+  name: WaapView
+  sql_table: default.access
+
+  segments:
+    org:
+      sql: org = {vars.org}
+      title: 组织过滤
+ 
+    violations:
+      sql: "(if(notEmpty(url_action[5]), url_action[5]!='外发', ip_geo[5]!='外发') and notEmpty(req_risk) and hasAny(req_risk, ['请求违规', '响应违规']))"
+      title: 违规过滤
+
+  dimensions:
+    ts:
+      sql: ts
+      type: time
+      title: 时间
+
+    id:
+      sql: id
+      type: string
+      title: ID
+
+    host:
+      sql: host
+      type: string
+      title: 域名
+
+    url:
+      sql: url
+      type: string
+      title: URL
+
+    method:
+      sql: method
+      type: string
+      title: 请求方式
+
+    type:
+      sql: arrayJoin(req_risk)
+      type: string
+      title: 风险类型
+
+    channel:
+      sql: channel
+      type: string
+      title: 站点
+
+  measures:
+    count:
+      sql: count()
+      type: number
+      title: 总数
+
+    aggCount:
+      sql: uniqHLL12(concat(url, method, arrayJoin(req_risk)))
+      type: number
+      title: 聚合数
+
+    lastTs:
+      sql: anyLast(ts)
+      type: time
+      title: 最后时间
+
+    lastId:
+      sql: anyLast(id)
+      type: string
+      title: 最后ID
+
+    message:
+      sql: anyLast(req_reason[indexOf(req_risk, arrayJoin(req_risk))])
+      type: string
+      title: 风险信息
+
+    sid:
+      sql: anyLast(sid)
+      type: string
+      title: 设备ID
+
+    uid:
+      sql: anyLast(uid)
+      type: string
+      title: 用户ID
+
+    ip:
+      sql: anyLast(ip)
+      type: string
+      title: IP地址
+
+    urlRoute:
+      sql: anyLast(url_route)
+      type: string
+      title: URL路由
+
+    status:
+      sql: anyLast(status)
+      type: string
+      title: 状态码
