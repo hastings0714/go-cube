@@ -38,9 +38,9 @@ cube:
       title: 请求方式
 
     type:
-      sql: arrayJoin(req_risk)
+      sql: arrayJoin(arrayFilter(x -> x IN ('请求违规', '响应违规'), req_risk))
       type: string
-      title: 风险类型
+      title: 违规类型
 
     channel:
       sql: channel
@@ -54,7 +54,7 @@ cube:
       title: 总数
 
     aggCount:
-      sql: uniqHLL12(concat(url, method, arrayJoin(req_risk)))
+      sql: uniqHLL12(concat(url, method, arrayJoin(arrayFilter(x -> x IN ('请求违规', '响应违规'), req_risk))))
       type: number
       title: 聚合数
 
@@ -69,7 +69,7 @@ cube:
       title: 最后ID
 
     message:
-      sql: anyLast(req_reason[indexOf(req_risk, arrayJoin(req_risk))])
+      sql: anyLast(req_reason[indexOf(req_risk, arrayJoin(arrayFilter(x -> x IN ('请求违规', '响应违规'), req_risk)))])
       type: string
       title: 风险信息
 
