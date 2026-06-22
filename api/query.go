@@ -177,7 +177,7 @@ func splitMemberName(s string) (string, string, string) {
 
 // granularityFunc 将 CubeJS granularity 映射到 ClickHouse 截断函数名
 var granularityFunc = map[string]string{
-	"second": "toStartOfSecond(%s)",
+	"second": "toStartOfInterval(%s, INTERVAL 1 SECOND)",
 	"minute": "toStartOfMinute(%s)",
 	"hour":   "toStartOfHour(%s)",
 	"day":    "toStartOfDay(%s)",
