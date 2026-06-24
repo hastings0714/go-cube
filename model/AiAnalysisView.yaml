@@ -1,0 +1,40 @@
+cube:
+  name: AiAnalysisView
+  sql_table: ai_analysis
+
+  segments:
+    org:
+      sql: "org = {vars.org}"
+
+  dimensions:
+    target:
+      sql: "target"
+      type: string
+      title: 任务目标主体
+
+    id:
+      sql: "id"
+      type: string
+
+    ts:
+      sql: "ts"
+      type: time
+
+    taskType:
+      sql: "task_type"
+      type: string
+
+    analysis:
+      sql: "analysis"
+      type: string
+
+    state:
+      sql: "state"
+      type: string
+
+    privacyRulePosition:
+      sql: "arrayMap(x -> JSONExtractString(x, 'sens_type') || ';' || JSONExtractString(x, 'field_position'),JSONExtractArrayRaw(extend_info, 'matches'))"
+      type: array
+
+
+
