@@ -23,7 +23,7 @@ type QueryRequest struct {
 	Mask           bool            `json:"-"`
 	// Vars 供调用方注入模板变量，不经 HTTP 传递。
 	// 键值对替换 SQL 中的 {vars.key} 占位符。
-	Vars map[string][]string `json:"-"`
+	Vars map[string][]any `json:"-"`
 }
 
 // DateRange 支持字符串或字符串数组格式
@@ -216,6 +216,12 @@ func formatArg(v interface{}) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
+const (
+	varFilterMinCount      = "api_filter_min_count"
+	varLifecycleActiveDays = "api_lifecycle_active_days"
+	varLifecycleNewDays    = "api_lifecycle_new_days"
+)
+
 func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 	mask := req.Mask
 
@@ -387,7 +393,6 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 			}
 		}
 	}
-
 	// timeDimensions: 统一追加到 WHERE，不再自动路由到 PREWHERE。
 	for _, td := range req.TimeDimensions {
 		_, fieldName, subKey := splitMemberName(td.Dimension)
@@ -459,7 +464,6 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 			}
 		}
 	}
-
 	// LIMIT/OFFSET
 	limit := req.Limit
 	if limit <= 0 {
@@ -472,7 +476,10 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 
 	sql.WriteString(" SETTINGS priority = 1")
 
-	return sql.String(), nil
+	if result := applyVars(sql.String()); result != "" {
+		return result, nil
+	}
+	return "", fmt.Errorf("unresolved vars placeholder")
 }
 
 func validateQuery(req *QueryRequest) error {

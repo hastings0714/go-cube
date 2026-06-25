@@ -137,6 +137,88 @@ func TestBuildQuery_FilterContains(t *testing.T) {
 	}
 }
 
+func TestBuildQuery_VarsNumberDimension(t *testing.T) {
+	cube := testCube()
+	cube.Dimensions["tag"] = model.Dimension{
+		SQL:  "if(ts > now() - ({vars.days} * 86400), '活跃', '失活')",
+		Type: "string",
+	}
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.tag"},
+		Vars:       map[string][]any{"days": {3}},
+	}
+
+	sql, err := buildQuery(req, cube)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(sql, "* 86400") || !contains(sql, "3 * 86400") {
+		t.Errorf("expected vars rendered as an unquoted integer, got: %s", sql)
+	}
+	if contains(sql, "{vars.") || contains(sql, "'3'") {
+		t.Errorf("expected no unresolved or quoted vars placeholder, got: %s", sql)
+	}
+}
+
+func TestBuildQuery_MissingVarsReturnsError(t *testing.T) {
+	cube := testCube()
+	cube.Dimensions["activeTag"] = model.Dimension{
+		SQL:  "if(ts > now() - {vars.api_lifecycle_active_days}, '活跃', '失活')",
+		Type: "string",
+	}
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.activeTag"},
+	}
+
+	_, err := buildQuery(req, cube)
+	if err == nil || !contains(err.Error(), "unresolved vars placeholder") {
+		t.Fatalf("expected unresolved vars error, got %v", err)
+	}
+}
+
+func TestBuildQuery_VarsNumberFilter(t *testing.T) {
+	cube := testCube()
+	cube.Dimensions["activeTag"] = model.Dimension{
+		SQL:  "if(ts > now() - {vars.api_lifecycle_active_days}, '活跃', '失活')",
+		Type: "string",
+	}
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.id"},
+		Filters: []Filter{
+			{Member: "AccessView.activeTag", Operator: "equals", Values: []interface{}{"活跃"}},
+		},
+		Vars: map[string][]any{varLifecycleActiveDays: {29}},
+	}
+
+	sql, err := buildQuery(req, cube)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(sql, "- 29") || !contains(sql, "IN ('活跃')") {
+		t.Errorf("expected vars rendered in filter SQL, got: %s", sql)
+	}
+}
+
+func TestBuildQuery_VarsStringDimension(t *testing.T) {
+	cube := testCube()
+	cube.Dimensions["orgExpr"] = model.Dimension{
+		SQL:  "{vars.org}",
+		Type: "string",
+	}
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.orgExpr"},
+		Vars:       map[string][]any{"org": {"acme"}},
+	}
+
+	sql, err := buildQuery(req, cube)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(sql, "'acme' AS") || contains(sql, "{vars.org}") {
+		t.Errorf("expected vars string dimension rendered, got: %s", sql)
+	}
+}
+
 func testApiCube() *model.Cube {
 	return &model.Cube{
 		Name:     "ApiView",
@@ -377,7 +459,7 @@ func TestBuildQuery_Segments(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.org"},
-		Vars:       map[string][]string{"org": {"tenant_abc"}},
+		Vars:       map[string][]any{"org": {"tenant_abc"}},
 	}
 
 	sql, err := buildQuery(req, testCube())
@@ -396,7 +478,7 @@ func TestBuildQuery_BlackSegment(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.black"},
-		Vars: map[string][]string{
+		Vars: map[string][]any{
 			"api_exact": {"host1/api/v1", "host2/api/v2"},
 			"api_regex": {"\\.php$", "^/admin/.*"},
 		},
@@ -422,7 +504,7 @@ func TestBuildQuery_BlackSegmentNoRegex(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.black"},
-		Vars: map[string][]string{
+		Vars: map[string][]any{
 			"api_exact": {"host1/api/v1"},
 			"api_regex": {""}, // 调用侧注入哨兵
 		},
@@ -449,7 +531,7 @@ func TestBuildQuery_BlackSegmentEmpty(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.black"},
-		Vars: map[string][]string{
+		Vars: map[string][]any{
 			"api_exact": {},
 			"api_regex": {},
 		},
@@ -472,7 +554,7 @@ func TestBuildQuery_SegmentsOrgEmptyVar(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.org"},
-		Vars:       map[string][]string{"org": {""}},
+		Vars:       map[string][]any{"org": {""}},
 	}
 
 	sql, err := buildQuery(req, testCube())
@@ -492,7 +574,7 @@ func TestBuildQuery_SegmentVarsSQLInjection(t *testing.T) {
 	req := &QueryRequest{
 		Dimensions: []string{"AccessView.id"},
 		Segments:   []string{"AccessView.org"},
-		Vars:       map[string][]string{"org": {"evil' OR '1'='1"}},
+		Vars:       map[string][]any{"org": {"evil' OR '1'='1"}},
 	}
 
 	sql, err := buildQuery(req, testCube())
@@ -1046,7 +1128,7 @@ func TestBuildQuery_SubquerySQLVarsOrg(t *testing.T) {
 
 	req := &QueryRequest{
 		Dimensions: []string{"WeakView.host"},
-		Vars:       map[string][]string{"org": {"tenant_abc"}},
+		Vars:       map[string][]any{"org": {"tenant_abc"}},
 	}
 
 	sql, err := buildQuery(req, cube)
@@ -1097,7 +1179,7 @@ func TestBuildQuery_TimeDimension_PhysicalTableToWhere(t *testing.T) {
 			{Dimension: "AccessView.ts", DateRange: DateRange{V: []string{"2026-04-01 00:00:00", "2026-04-07 23:59:59"}}},
 		},
 		Segments: []string{"AccessView.org"},
-		Vars:     map[string][]string{"org": {"tenant_abc"}},
+		Vars:     map[string][]any{"org": {"tenant_abc"}},
 	}
 
 	sql, err := buildQuery(req, testCube())
@@ -1318,7 +1400,7 @@ func TestRiskView_FilterShowTime_WHERE(t *testing.T) {
 		},
 		Segments: []string{"RiskView.org", "RiskView.whiteFilter", "RiskView.whiteRiskFilter", "RiskView.riskDenoiseFilter", "RiskView.statusFilter"},
 		Limit:    20,
-		Vars:     map[string][]string{"org": {"testorg"}},
+		Vars:     map[string][]any{"org": {"testorg"}},
 	}
 	sql, err := buildQuery(req, riskCube())
 	if err != nil {
@@ -1348,7 +1430,7 @@ func TestRiskView_ListFilterShowTime_HAVING(t *testing.T) {
 		},
 		Segments: []string{"RiskView.org", "RiskView.whiteFilter", "RiskView.whiteRiskFilter", "RiskView.riskDenoiseFilter", "RiskView.statusFilter"},
 		Limit:    20,
-		Vars:     map[string][]string{"org": {"testorg"}},
+		Vars:     map[string][]any{"org": {"testorg"}},
 	}
 	sql, err := buildQuery(req, riskCube())
 	if err != nil {

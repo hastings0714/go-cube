@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,6 +94,9 @@ func (h *Handler) setupQuery(req *QueryRequest) (*model.Cube, string, error) {
 //   - X-Sw-Org:       org 模板变量
 //   - X-Sw-Api-Exact: api_exact 模板变量（逗号分隔多值）
 //   - X-Sw-Api-Regex: api_regex 模板变量（逗号分隔多值）
+//   - X-Sw-Api-Filter-Min-Count:      api_filter_min_count 数值模板变量
+//   - X-Sw-Api-Lifecycle-Active-Days: api_lifecycle_active_days 数值模板变量
+//   - X-Sw-Api-Lifecycle-New-Days:    api_lifecycle_new_days 数值模板变量
 func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 	timeout := h.queryTimeout
 	if timeout == 0 {
@@ -116,13 +120,29 @@ func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 
 	req.Mask = r.Header.Get("X-Auth-Mask") == "true"
 	// api_exact/api_regex 始终注入，未传时 Split("", ",") 返回 [""]，SQL 中条件短路无影响
-	req.Vars = map[string][]string{
+	req.Vars = map[string][]any{
 		"org":       {r.Header.Get("X-Sw-Org")},
-		"api_exact": strings.Split(r.Header.Get("X-Sw-Api-Exact"), ","),
-		"api_regex": strings.Split(r.Header.Get("X-Sw-Api-Regex"), ","),
+		"api_exact": stringVars(strings.Split(r.Header.Get("X-Sw-Api-Exact"), ",")),
+		"api_regex": stringVars(strings.Split(r.Header.Get("X-Sw-Api-Regex"), ",")),
+	}
+	for key, header := range map[string]string{
+		varFilterMinCount:      "X-Sw-Api-Filter-Min-Count",
+		varLifecycleActiveDays: "X-Sw-Api-Lifecycle-Active-Days",
+		varLifecycleNewDays:    "X-Sw-Api-Lifecycle-New-Days",
+	} {
+		v := strings.TrimSpace(r.Header.Get(header))
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		req.Vars[key] = []any{n}
 	}
 	if v := r.Header.Get("Search-Target"); v != "" {
-		req.Vars["search_target"] = []string{v}
+		req.Vars["search_target"] = []any{v}
 	}
 
 	if req.Ungrouped && len(req.Measures) == 0 &&
@@ -137,6 +157,14 @@ func (h *Handler) HandleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func stringVars(vals []string) []any {
+	out := make([]any, len(vals))
+	for i, v := range vals {
+		out[i] = v
+	}
+	return out
 }
 
 // handleLoadStream 流式处理 ungrouped 查询，使用 NDJSON 逐行返回。

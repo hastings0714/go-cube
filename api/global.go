@@ -79,10 +79,10 @@ func OfflineTrace(ctx context.Context, taskID, org string, mask bool, clickhouse
 	}
 
 	req.Mask = mask
-	req.Vars = map[string][]string{
+	req.Vars = map[string][]any{
 		"org":       {org},
-		"api_exact": strings.Split(apiExact, ","),
-		"api_regex": strings.Split(apiRegex, ","),
+		"api_exact": stringVars(strings.Split(apiExact, ",")),
+		"api_regex": stringVars(strings.Split(apiRegex, ",")),
 	}
 
 	if err := validateQuery(req); err != nil {
