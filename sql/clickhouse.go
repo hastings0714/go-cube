@@ -29,11 +29,15 @@ func NewClient(cfg *config.ClickHouseConfig) (*Client, error) {
 	if queryTimeout == 0 {
 		queryTimeout = 60 * time.Second
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if cfg.MaxConnsPerHost > 0 {
+		transport.MaxConnsPerHost = cfg.MaxConnsPerHost
+	}
 	return &Client{
 		url:  addr + "?default_format=JSON&database=" + cfg.Database,
 		user: cfg.Username,
 		key:  cfg.Password,
-		http: &http.Client{Timeout: queryTimeout},
+		http: &http.Client{Timeout: queryTimeout, Transport: transport},
 	}, nil
 }
 

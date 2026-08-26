@@ -20,11 +20,12 @@ type ServerConfig struct {
 }
 
 type ClickHouseConfig struct {
-	Hosts        []string      `yaml:"hosts"`
-	Database     string        `yaml:"database"`
-	Username     string        `yaml:"username"`
-	Password     string        `yaml:"password"`
-	QueryTimeout time.Duration `yaml:"query_timeout"`
+	Hosts           []string      `yaml:"hosts"`
+	Database        string        `yaml:"database"`
+	Username        string        `yaml:"username"`
+	Password        string        `yaml:"password"`
+	QueryTimeout    time.Duration `yaml:"query_timeout"`
+	MaxConnsPerHost int           `yaml:"max_conns_per_host"`
 }
 
 type ModelsConfig struct {

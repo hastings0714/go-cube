@@ -17,12 +17,13 @@ var defaultHandler *Handler
 
 // Init initializes the global Handler with the given ClickHouse connection parameters.
 // An optional queryTimeout can be provided; defaults to 60s if zero or omitted.
-func Init(hosts []string, database, username, password string, queryTimeout ...time.Duration) error {
+func Init(hosts []string, database, username, password string, maxConnsPerHost int, queryTimeout ...time.Duration) error {
 	cfg := &config.ClickHouseConfig{
-		Hosts:    hosts,
-		Database: database,
-		Username: username,
-		Password: password,
+		Hosts:           hosts,
+		Database:        database,
+		Username:        username,
+		Password:        password,
+		MaxConnsPerHost: maxConnsPerHost,
 	}
 	qt := 60 * time.Second
 	if len(queryTimeout) > 0 && queryTimeout[0] > 0 {
