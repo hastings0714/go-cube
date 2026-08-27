@@ -1,0 +1,99 @@
+cube:
+  name: AccountAssetView
+  # Application attribution is identical to ApiView: current host_dict + URL.
+  # Merge host/path records before counting assets so aliases never inflate totals.
+  sql: |
+    SELECT app_info[3] AS app_id, any(app_info[2]) AS application, account AS content,
+           min(first_ts) AS first_seen, max(last_ts) AS last_active,
+           uniqExactMerge(requests) AS visits,
+           uniqMapMerge(req_sens) AS req_map, uniqMapMerge(res_sens) AS res_map
+    FROM (
+      SELECT s.*, d.requests, d.req_sens, d.res_sens,
+        multiIf(
+          notEmpty(dictGet('host_dict', 'info', s.host)),
+          arrayFirst(x -> position(s.url, '/') != 1 OR startsWith(s.url, x[1]), dictGet('host_dict', 'info', s.host)),
+          notEmpty(dictGet('host_dict', 'info', splitByRegexp(':\\d+$', s.host)[1] || ':*')),
+          arrayFirst(x -> startsWith(s.url, x[1]), dictGet('host_dict', 'info', splitByRegexp(':\\d+$', s.host)[1] || ':*')),
+          CAST([], 'Array(String)')
+        ) AS app_info
+      FROM (
+        SELECT host, url, account, min(first_ts) AS first_ts, max(last_ts) AS last_ts
+        FROM default.account_asset GROUP BY host, url, account
+      ) AS s
+      LEFT JOIN (
+        SELECT host, url, account, uniqExactMergeState(requests) AS requests,
+               uniqMapMergeState(req_sens) AS req_sens, uniqMapMergeState(res_sens) AS res_sens
+        FROM default.account_day
+        WHERE dt >= today() - 29 AND dt <= today()
+        GROUP BY host, url, account
+      ) AS d USING (host, url, account)
+    ) WHERE notEmpty(app_info[3])
+    GROUP BY app_id, content
+
+  dimensions:
+    appId:
+      sql: app_id
+      type: string
+      title: 应用ID
+    application:
+      sql: application
+      type: string
+      title: 所属应用
+    content:
+      sql: content
+      type: string
+      title: 账号
+    employeeId:
+      sql: dictGetOrDefault('default.user_dict', 'employee_id', content, toUInt64(0))
+      type: number
+      title: 员工ID
+    employeeName:
+      sql: dictGetOrDefault('default.user_dict', 'name', content, '')
+      type: string
+      title: 员工姓名
+    department:
+      sql: dictGetOrDefault('default.user_dict', 'department', content, '')
+      type: string
+      title: 部门
+    employeePosition:
+      sql: dictGetOrDefault('default.user_dict', 'role', content, '')
+      type: string
+      title: 职位
+    hasSensitive:
+      sql: toUInt8(notEmpty(mapKeys(req_map)) OR notEmpty(mapKeys(res_map)))
+      type: number
+      title: 近30天是否涉敏
+
+  measures:
+    assetCount:
+      sql: count()
+      type: number
+      title: 账号资产数
+    sensitiveCount:
+      sql: countIf(notEmpty(mapKeys(req_map)) OR notEmpty(mapKeys(res_map)))
+      type: number
+      title: 近30天涉敏账号数
+    boundCount:
+      sql: countIf(dictGetOrDefault('default.user_dict', 'employee_id', content, toUInt64(0)) > 0)
+      type: number
+      title: 已关联账号数
+    count:
+      sql: sum(visits)
+      type: number
+      title: 近30天访问次数
+    firstTs:
+      sql: min(first_seen)
+      type: time
+      title: 首次识别时间
+    lastTs:
+      sql: max(last_active)
+      type: time
+      title: 最近活跃时间
+    reqSensScoreTuple:
+      sql: arraySort(x -> (-x.2,x.1), arrayMap(x -> (format('{}({})', x.1, toString(x.2)), dictGetInt64('default.privacy_dict','score',x.1)), arrayZip(mapKeys(any(req_map)), mapValues(any(req_map)))))
+      type: array
+      title: 请求涉敏
+    resSensScoreTuple:
+      sql: arraySort(x -> (-x.2,x.1), arrayMap(x -> (format('{}({})', x.1, toString(x.2)), dictGetInt64('default.privacy_dict','score',x.1)), arrayZip(mapKeys(any(res_map)), mapValues(any(res_map)))))
+      type: array
+      title: 响应涉敏
