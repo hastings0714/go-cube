@@ -153,6 +153,19 @@ cube:
       type: number
       title: 应用账号数
 
+    accountAssetCount:
+      sql: uniqExactIf(tuple(channel, content), type = 'User')
+      type: number
+      title: 应用账号精确数量
+
+    sensitiveAccountAssetCount:
+      sql: >-
+        uniqExactIf(tuple(channel, content), type = 'User' AND
+          (notEmpty(mapKeys(finalizeAggregation(req_sens_uniq))) OR
+           notEmpty(mapKeys(finalizeAggregation(res_sens_uniq)))))
+      type: number
+      title: 涉敏应用账号精确数量
+
     # 风险规则相关（与请求/响应涉敏结构一致）
     # riskCount: arrayFilter过滤掉score=0的规则
     riskScoreTuple:
