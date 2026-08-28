@@ -104,6 +104,59 @@ result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%5B%22Aud
 check "appSumMap (应用访问次数, today)" "$result"
 
 echo ""
+echo "=== 12. AuditView: account status counts (all retained data, no Top300) ==="
+query='{"measures":["AuditView.accountAssetCount","AuditView.newAccountAssetCount","AuditView.activeAccountAssetCount"],"filters":[{"member":"AuditView.type","operator":"equals","values":["User"]}]}'
+result=$(curl -sG "$BASE/load" --data-urlencode "queryType=multi" --data-urlencode "query=$query")
+CHECK_TOP_LEVEL_ERROR=1 CHECK_NESTED_ERROR=1 check "account total/new/active counts" "$result"
+# Verify values, not just successful query execution. Counts may be JSON strings.
+if echo "$result" | jq -e '
+    .results[0].data | length == 1
+' > /dev/null 2>&1 && echo "$result" | jq -e '
+    .results[0].data[0] |
+    (."AuditView.accountAssetCount" | tonumber) as $total |
+    (."AuditView.newAccountAssetCount" | tonumber) as $new |
+    (."AuditView.activeAccountAssetCount" | tonumber) as $active |
+    $total >= 0 and $new >= 0 and $active >= 0 and $total == ($new + $active)
+' > /dev/null 2>&1; then
+    echo "[PASS] account total equals new plus active"
+    ((pass++))
+else
+    echo "[FAIL] account total/new/active count invariant"
+    ((fail++))
+fi
+
+echo ""
+echo "=== 13. AuditView: account status filtering and pagination ==="
+# No date filter: status must use the earliest timestamp in all retained rows.
+# Exercise both first-page and offset queries; empty pages are valid.
+for status in new active; do
+    for offset in 0 40; do
+        query=$(jq -nc --arg status "$status" --argjson offset "$offset" '{
+            dimensions: ["AuditView.channel", "AuditView.content"],
+            measures: ["AuditView.accountStatus", "AuditView.firstTs", "AuditView.count"],
+            filters: [
+                {member: "AuditView.type", operator: "equals", values: ["User"]},
+                {member: "AuditView.accountStatus", operator: "equals", values: [$status]}
+            ],
+            order: {"AuditView.channel": "asc", "AuditView.content": "asc"},
+            limit: 20, offset: $offset
+        }')
+        result=$(curl -sG "$BASE/load" --data-urlencode "queryType=multi" --data-urlencode "query=$query")
+        CHECK_TOP_LEVEL_ERROR=1 CHECK_NESTED_ERROR=1 check "account status=$status offset=$offset" "$result"
+        if echo "$result" | jq -e --arg status "$status" '
+            .results[0].data |
+            type == "array" and length <= 20 and all(.[]; ."AuditView.accountStatus" == $status)
+        ' > /dev/null 2>&1; then
+            echo "[PASS] filtered account status and page size"
+            ((pass++))
+        else
+            echo "[FAIL] filtered account status or page size"
+            ((fail++))
+        fi
+    done
+done
+
+echo ""
 echo "========================================"
 echo "Results: $pass passed, $fail failed"
 echo "========================================"
