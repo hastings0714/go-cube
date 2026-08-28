@@ -158,6 +158,30 @@ cube:
       type: number
       title: 应用账号精确数量
 
+    # Status uses only retained audit data. An account is new when none of its
+    # retained rows predates the seven-day boundary; recent visits alone are insufficient.
+    newAccountAssetCount:
+      sql: >-
+        uniqExactIf(tuple(channel, content), type = 'User') -
+        uniqExactIf(tuple(channel, content), type = 'User' AND
+          if(first_ts = toDateTime(0), toDateTime(dt), first_ts) < now() - INTERVAL 7 DAY)
+      type: number
+      title: 新增应用账号数
+
+    activeAccountAssetCount:
+      sql: >-
+        uniqExactIf(tuple(channel, content), type = 'User' AND
+          if(first_ts = toDateTime(0), toDateTime(dt), first_ts) < now() - INTERVAL 7 DAY)
+      type: number
+      title: 活跃应用账号数
+
+    accountStatus:
+      sql: >-
+        if(min(if(first_ts = toDateTime(0), toDateTime(dt), first_ts)) >= now() - INTERVAL 7 DAY,
+          'new', 'active')
+      type: string
+      title: 账号状态
+
     sensitiveAccountAssetCount:
       sql: >-
         uniqExactIf(tuple(channel, content), type = 'User' AND
