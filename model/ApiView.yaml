@@ -12,6 +12,7 @@ cube:
                                                                                  splitByRegexp(':\\d+$', assumeNotNull(host))[1] || ':*'))[2],
                    host)          as app_name,
            argMax(host, ts)       as last_host,
+           multiIf(arrayExists(x -> position(assumeNotNull(url), '/') != 1 or startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', assumeNotNull(last_host))), arrayFirst(x -> position(assumeNotNull(url), '/') != 1 or startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', assumeNotNull(last_host)))[3], arrayExists(x -> startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', splitByRegexp(':\\d+$', assumeNotNull(last_host))[1] || ':*')), arrayFirst(x -> startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', splitByRegexp(':\\d+$', assumeNotNull(last_host))[1] || ':*'))[3], '') as app_id,
            groupUniqArray(host)   as host_list,
            max(ts)                as max_ts,
            min(first_ts)          as first_ts,
@@ -117,12 +118,12 @@ cube:
       title: 首次访问
 
     appId:
-      sql: multiIf(notEmpty(dictGet('host_dict', 'info', assumeNotNull(last_host))), arrayFirst(x -> position(assumeNotNull(url), '/') != 1 or startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', assumeNotNull(last_host)))[3], notEmpty(dictGet('host_dict', 'info', splitByRegexp(':\\d+$', assumeNotNull(last_host))[1] || ':*')), arrayFirst(x -> startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', splitByRegexp(':\\d+$', assumeNotNull(last_host))[1] || ':*'))[3], '')
+      sql: app_id
       type: string
       title: 应用ID
 
     dctSection:
-      sql: dictGetString('app_dict', 'department', multiIf(notEmpty(dictGet('host_dict', 'info', assumeNotNull(last_host))), arrayFirst(x -> position(assumeNotNull(url), '/') != 1 or startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', assumeNotNull(last_host)))[3], notEmpty(dictGet('host_dict', 'info', splitByRegexp(':\\d+$', assumeNotNull(last_host))[1] || ':*')), arrayFirst(x -> startsWith(assumeNotNull(url), x[1]), dictGet('host_dict', 'info', splitByRegexp(':\\d+$', assumeNotNull(last_host))[1] || ':*'))[3], ''))
+      sql: dictGetString('app_dict', 'department', app_id)
       type: string
       title: 应用部门
 
@@ -475,6 +476,121 @@ cube:
       sql: anyIf(url_action[1], url_action[2] = 'logo')
       type: string
       title: 应用LOGO
+
+    appStatus:
+      sql: multiIf(max(dictGetUInt8('app_dict', 'offline', app_id)) = 1, '下线', min(first_ts) > (toStartOfDay(now()) - ((3600 * 24) * {vars.api_lifecycle_new_days})), '新上线', max(max_ts) > (toStartOfDay(now()) - ((3600 * 24) * {vars.api_lifecycle_active_days})), '活跃', '失活')
+      type: string
+      title: 应用状态
+
+    applicationNetworkTypeCount:
+      sql: |
+        arrayMap(
+          value -> concat(value, ';@;', toString(countEqual(application_network_types, value))),
+          arrayFilter(value -> value != '' AND value != '外发', arrayDistinct((arrayFlatten(arrayMap(
+            application_rows_for_key -> [arrayReduce('anyHeavy', arrayMap(row -> row.2, application_rows_for_key))],
+            (arraySplit(
+              (row, previous_row) -> row.1 != previous_row.1,
+              (arraySort(row -> row.1, groupArray(tuple(
+                tuple(app_name, app_id),
+                ifNull(url_action[5], '')
+              ))) AS application_network_rows),
+              arrayShiftRight(application_network_rows, 1)
+            ) AS application_network_groups)
+          )) AS application_network_types)))
+        )
+      type: array
+      title: 应用网络类型统计
+
+    applicationSensitivityCount:
+      sql: |
+        arrayMap(
+          value -> concat(value, ';@;', toString(countEqual(application_sensitivity_levels, value))),
+          arrayDistinct((arrayFlatten(arrayMap(
+            application_rows_for_key -> [arrayMap(
+              sensitivity_keys -> multiIf(
+                empty(sensitivity_keys), '0',
+                arrayMap(
+                  score -> multiIf(score >= 100, '100', score >= 80, '80', score >= 50, '50', score >= 20, '20', '0'),
+                  [floor(100 - 100 * arrayProduct(arrayMap(
+                    key -> 1 - 0.01 * dictGetInt64('default.privacy_dict', 'score', key),
+                    sensitivity_keys
+                  )), 2)]
+                )[1]
+              ),
+              [arrayDistinct(arrayFlatten(arrayMap(row -> row.3, application_rows_for_key)))]
+            )[1]],
+              arrayFilter(
+                application_rows_for_key -> arrayReduce('anyHeavy', arrayMap(row -> row.2, application_rows_for_key)) != '外发',
+                (arraySplit(
+                (row, previous_row) -> row.1 != previous_row.1,
+                (arraySort(row -> row.1, groupArray(tuple(
+                tuple(app_name, app_id),
+                ifNull(url_action[5], ''),
+                if(url_action[5] != '外发', mapKeys(res_sens_uniq_map), mapKeys(req_sens_uniq_map))
+                ))) AS application_sensitivity_rows),
+                arrayShiftRight(application_sensitivity_rows, 1)
+                ) AS application_sensitivity_groups)
+              )
+          )) AS application_sensitivity_levels))
+        )
+      type: array
+      title: 应用敏感等级统计
+
+    applicationStatusCount:
+      sql: |
+        arrayMap(
+          value -> concat(value, ';@;', toString(countEqual(application_statuses, value))),
+          arrayDistinct((arrayFlatten(arrayMap(
+            application_rows_for_key -> [multiIf(
+              arrayMax(arrayMap(row -> row.5, application_rows_for_key)) = 1, '下线',
+              arrayMin(arrayMap(row -> row.3, application_rows_for_key)) > (toStartOfDay(now()) - ((3600 * 24) * {vars.api_lifecycle_new_days})), '新上线',
+              arrayMax(arrayMap(row -> row.4, application_rows_for_key)) > (toStartOfDay(now()) - ((3600 * 24) * {vars.api_lifecycle_active_days})), '活跃',
+              '失活'
+            )],
+              arrayFilter(
+                application_rows_for_key -> arrayReduce('anyHeavy', arrayMap(row -> row.2, application_rows_for_key)) != '外发',
+                (arraySplit(
+                (row, previous_row) -> row.1 != previous_row.1,
+                (arraySort(row -> row.1, groupArray(tuple(
+                tuple(app_name, app_id),
+                ifNull(url_action[5], ''),
+                first_ts,
+                max_ts,
+                dictGetUInt8('app_dict', 'offline', app_id)
+                ))) AS application_status_rows),
+                arrayShiftRight(application_status_rows, 1)
+                ) AS application_status_groups)
+              )
+          )) AS application_statuses))
+        )
+      type: array
+      title: 应用运行状态统计
+
+    applicationNetDomainCount:
+      sql: |
+        arrayMap(
+          value -> concat(value, ';@;', toString(countEqual(application_net_domains, value))),
+          arrayDistinct((arrayFlatten(arrayMap(
+            application_rows_for_key -> arrayMap(
+              domains -> arrayConcat(if(empty(domains), [], ['__total__']), domains),
+              [arrayDistinct(arrayFilter(domain -> domain != '', arrayMap(row -> row.3, application_rows_for_key)))]
+            )[1],
+              arrayFilter(
+                application_rows_for_key -> arrayReduce('anyHeavy', arrayMap(row -> row.2, application_rows_for_key)) != '外发',
+                (arraySplit(
+                (row, previous_row) -> row.1 != previous_row.1,
+                (arraySort(row -> row.1, groupArray(tuple(
+                tuple(app_name, app_id),
+                ifNull(url_action[5], ''),
+                if(ifNull(url_action[7], '') != '', splitByChar('(', ifNull(url_action[7], ''))[1], '')
+                ))) AS application_net_domain_rows),
+                arrayShiftRight(application_net_domain_rows, 1)
+                ) AS application_net_domain_groups)
+              )
+          )) AS application_net_domains))
+        )
+      type: array
+      title: 应用网络域统计
 
     customRuleTagSet:
       sql: groupUniqArrayArray(multiIf(url_action[6]!='', splitByChar(',', url_action[6]), if(url_action[2]='api' OR url_action[2]='auto', url_action[1], '')!='', [if(url_action[2]='api' OR url_action[2]='auto', url_action[1], '')], []))
