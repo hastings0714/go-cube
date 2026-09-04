@@ -420,7 +420,7 @@ cube:
       title: 应用数
 
     applicationNetworkTypeCount:
-      sql: uniqExactMap(map(ifNull(url_action[5], ''), app_name))
+      sql: uniqExactMapIf(map(ifNull(url_action[5], ''), app_name), notEmpty(ifNull(url_action[5], '')))
       type: string
       title: 应用网络类型统计
 
@@ -430,7 +430,7 @@ cube:
       title: 应用敏感等级统计
 
     applicationNetDomainCount:
-      sql: uniqExactMap(map(if(url_action[7] != '', splitByChar('(', url_action[7])[1], ''), app_name))
+      sql: uniqExactMapIf(map(if(url_action[7] != '', splitByChar('(', url_action[7])[1], ''), app_name), url_action[7] != '' AND splitByChar('(', url_action[7])[1] != '')
       type: string
       title: 应用网络域统计
 
