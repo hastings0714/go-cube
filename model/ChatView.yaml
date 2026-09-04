@@ -98,7 +98,7 @@ cube:
       type: string
       title: Agent名称
     latency:
-      sql: perf[1]
+      sql: perf[1]/1000
       type: number
       title: 耗时(ms)
     cost:
