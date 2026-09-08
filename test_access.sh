@@ -546,6 +546,37 @@ result=$(curl -s "$BASE/load?queryType=multi&query=%7B%22measures%22%3A%5B%22Acc
 check "fileCount by channel+host+method+url+urlRoute+fileDirection order desc (fileMd5=28d89a2b8f464a16b3b6e77ea833b981, fileDirection=下载)" "$result"
 
 echo ""
+echo "=== 73. file assets grouped by MD5 with latest attributes, limit 20 ==="
+# Tests: one row per MD5; changing file attributes come from the latest access record
+file_size_query='{"measures":["AccessView.lastId","AccessView.lastTs","AccessView.lastFileName","AccessView.lastFileSize","AccessView.lastFileType","AccessView.lastFileSha1","AccessView.lastFileDirection","AccessView.lastFileSensKeyNum","AccessView.lastFileChannel","AccessView.lastFileHost","AccessView.lastFileUrl","AccessView.lastFileUrlRoute","AccessView.fileCount"],"timeDimensions":[{"dimension":"AccessView.ts","dateRange":"from 7 days ago to now"}],"filters":[{"member":"AccessView.fileName","operator":"notEquals","values":[""]},{"member":"AccessView.fileMd5","operator":"notEquals","values":[""]}],"dimensions":["AccessView.fileMd5"],"limit":20,"segments":["AccessView.org","AccessView.black"],"timezone":"Asia/Shanghai"}'
+result=$(curl -s -G --data-urlencode "queryType=multi" --data-urlencode "query=$file_size_query" "$BASE/load")
+check "file assets grouped by MD5 with latest attributes limit 20" "$result"
+latest_file_measures=$(echo "$file_size_query" | jq -c '.measures')
+if echo "$result" | jq -e --argjson members "$latest_file_measures" '(.results[0].annotation.measures // {}) as $annotations | all($members[]; $annotations[.] != null)' > /dev/null 2>&1; then
+    echo "[PASS] file asset latest measure annotations"
+    ((pass++))
+else
+    echo "[FAIL] file asset latest measure annotations - one or more measures are missing"
+    echo "$result" | jq '.results[0].annotation.measures'
+    ((fail++))
+fi
+if echo "$result" | jq -e --argjson members "$latest_file_measures" '(.results[0].data // []) as $rows | all($rows[]; . as $row | all($members[]; $row[.] != null))' > /dev/null 2>&1; then
+    echo "[PASS] file asset latest measure row values"
+    ((pass++))
+else
+    echo "[FAIL] file asset latest measure row values - one or more values are missing"
+    echo "$result" | jq '.results[0].data[0]'
+    ((fail++))
+fi
+
+echo ""
+echo "=== 74. file asset tree counts in one query ==="
+# Tests: total, category and direction distinct-MD5 counts are returned by one dimensionless query
+file_tree_query='{"measures":["AccessView.fileAssetCount","AccessView.fileCategoryCountMap","AccessView.fileDirectionCountMap"],"timeDimensions":[{"dimension":"AccessView.ts","dateRange":"from 7 days ago to now"}],"filters":[{"member":"AccessView.fileName","operator":"notEquals","values":[""]},{"member":"AccessView.fileMd5","operator":"notEquals","values":[""]}],"dimensions":[],"segments":["AccessView.org","AccessView.black"],"timezone":"Asia/Shanghai"}'
+result=$(curl -s -G --data-urlencode "queryType=multi" --data-urlencode "query=$file_tree_query" "$BASE/load")
+check "file asset tree counts in one query" "$result"
+
+echo ""
 echo "=== AccessView 涉敏字段分布 ==="
 #{"measures":["AccessView.count"],"timeDimensions":[{"dimension":"AccessView.ts","dateRange":"from 15 minutes ago to 15 minutes from now"}],"filters":[{"member":"AccessView.isSens","operator":"notEquals","values":[""]},{"member":"AccessView.sensScore","operator":"gte","values":["0"]}],"dimensions":["AccessView.sensKeyExt"],"segments":["AccessView.org","AccessView.black"],"timezone":"Asia/Shanghai"}
 result=$(curl -s "$BASE/load?query=%7B%22measures%22%3A%5B%22AccessView.count%22%5D%2C%22timeDimensions%22%3A%5B%7B%22dimension%22%3A%22AccessView.ts%22%2C%22dateRange%22%3A%22from%2015%20minutes%20ago%20to%2015%20minutes%20from%20now%22%7D%5D%2C%22filters%22%3A%5B%7B%22member%22%3A%22AccessView.isSens%22%2C%22operator%22%3A%22notEquals%22%2C%22values%22%3A%5B%22%22%5D%7D%2C%7B%22member%22%3A%22AccessView.sensScore%22%2C%22operator%22%3A%22gte%22%2C%22values%22%3A%5B%220%22%5D%7D%5D%2C%22dimensions%22%3A%5B%22AccessView.sensKeyExt%22%5D%2C%22segments%22%3A%5B%22AccessView.org%22%2C%22AccessView.black%22%5D%2C%22timezone%22%3A%22Asia%2FShanghai%22%7D&queryType=multi")
