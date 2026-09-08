@@ -1002,6 +1002,56 @@ cube:
       type: time
       title: 最近访问时间
 
+    lastFileName:
+      sql: argMax(if(JSONExtractString(file, 'name') != '', JSONExtractString(file, 'name'), JSONExtractString(file,1,'name')), ts)
+      type: string
+      title: 文件名称
+
+    lastFileSize:
+      sql: argMax(if(JSONExtractString(file, 'name') != '', JSONExtractUInt(file, 'size'), JSONExtractUInt(file,1,'size')), ts)
+      type: number
+      title: 文件大小
+
+    lastFileType:
+      sql: argMax(if(JSONExtractString(file, 'name') != '', JSONExtractString(file, 'type'), JSONExtractString(file,1,'type')), ts)
+      type: string
+      title: 文件类型
+
+    lastFileSha1:
+      sql: argMax(if(JSONExtractString(file, 'name') != '', JSONExtractString(file, 'sha1'), JSONExtractString(file,1,'sha1')), ts)
+      type: string
+      title: 文件SHA1
+
+    lastFileDirection:
+      sql: argMax(if(url_action[1] IN ['下载', '上传'], url_action[1], ''), ts)
+      type: string
+      title: 文件传输方向
+
+    lastFileSensKeyNum:
+      sql: argMax(toJSONString(arrayReduce('sumMap', arrayMap(x -> map(x, 1), if(JSONExtractString(file, 'name') != '', res_sens_k, req_sens_k)))), ts)
+      type: string
+      title: 文件敏感数据统计
+
+    lastFileChannel:
+      sql: argMax(channel, ts)
+      type: string
+      title: 最近访问应用
+
+    lastFileHost:
+      sql: argMax(host, ts)
+      type: string
+      title: 最近访问域名
+
+    lastFileUrl:
+      sql: argMax(url, ts)
+      type: string
+      title: 最近访问URL
+
+    lastFileUrlRoute:
+      sql: argMax(normalizeUrl(url_route, url), ts)
+      type: string
+      title: 最近访问API
+
     uniqHostCount:
       sql: uniq(host)
       type: number
@@ -1106,6 +1156,21 @@ cube:
       sql: uniqHLL12(if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5')))
       type: number
       title: 隐私文件数
+
+    fileAssetCount:
+      sql: uniqExactIf(if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5')), if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5'))!='')
+      type: number
+      title: 文件资产数
+
+    fileCategoryCountMap:
+      sql: uniqExactMapIf(map(multiIf((if(notEmpty(file), if(JSONExtractString(file, 'name')!='', '下载', '上传'), '')='下载' and notEmpty(res_sens_k)) or (if(notEmpty(file), if(JSONExtractString(file, 'name')!='', '下载', '上传'), '')='上传' and notEmpty(req_sens_k)), '隐私文件', if(JSONExtractString(file, 'name') != '', JSONExtractString(file, 'encrypt'), JSONExtractString(file,1,'encrypt')) = 'true', '加密文件', '普通文件'), if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5'))), if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5'))!='')
+      type: string
+      title: 文件特征统计
+
+    fileDirectionCountMap:
+      sql: uniqExactMapIf(map(if(url_action[1] IN ['下载', '上传'], url_action[1], ''), if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5'))), if(JSONExtractString(file,'name')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5'))!='' and url_action[1] IN ['下载', '上传'])
+      type: string
+      title: 文件传输方向统计
 
     fileCount:
       sql: countIf(if(JSONExtractString(file,'md5')!='',JSONExtractString(file,'md5'),JSONExtractString(file,1,'md5'))!='')
