@@ -1012,10 +1012,10 @@ cube:
       type: string
       title: 最近账号提取位置
 
-    lastTokenFunction:
+    lastTokenApi:
       sql: dictGetOrDefault('default.token_dict', 'path', argMax(ext_id[1], ts), '')
       type: string
-      title: 最近账号关联函数
+      title: 最近账号关联API
 
     lastTokenType:
       sql: dictGetOrDefault('default.token_dict', 'type', argMax(ext_id[1], ts), '')
