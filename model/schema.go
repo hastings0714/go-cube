@@ -27,8 +27,12 @@ type Measure struct {
 }
 
 type Segment struct {
-	SQL   string `yaml:"sql"`
-	Title string `yaml:"title,omitempty"`
+	// SourceSQL optionally wraps the cube source. {source} expands to the current
+	// SQLTable/SQL, including runtime overrides. The template must preserve the
+	// columns used by the model; override the segment too when changing that schema.
+	SourceSQL string `yaml:"source_sql,omitempty"`
+	SQL       string `yaml:"sql"`
+	Title     string `yaml:"title,omitempty"`
 }
 
 // Annotatable 表示可被 annotation 描述的 cube 成员。
