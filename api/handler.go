@@ -84,6 +84,26 @@ func (h *Handler) setupQuery(req *QueryRequest) (*model.Cube, string, error) {
 			m.SQLTable = "default.access_offline_local"
 		}
 	}
+	// Account assets retain all retained-history statistics but only merge sensitive states
+	// from the last seven calendar days. Separate scans let ClickHouse prune
+	// old partitions before reading the large sensitive columns.
+	if m.Name == "AuditView" {
+		for _, segment := range req.Segments {
+			if segment == "AuditView.accountSensitive7d" {
+				source := m.GetSQLTable()
+				m.SQLTable = fmt.Sprintf(`(
+ SELECT * EXCEPT(req_sens_uniq, res_sens_uniq), req_sens_uniq, res_sens_uniq
+ FROM %s WHERE dt >= today() - 6 AND dt <= today()
+ UNION ALL
+ SELECT * EXCEPT(req_sens_uniq, res_sens_uniq),
+ initializeAggregation('uniqMapState', CAST(map(), 'Map(String, String)')) AS req_sens_uniq,
+ initializeAggregation('uniqMapState', CAST(map(), 'Map(String, String)')) AS res_sens_uniq
+ FROM %s WHERE dt < today() - 6 OR dt > today()
+) AS account_audit`, source, source)
+				break
+			}
+		}
+	}
 	query, err := buildQuery(req, m)
 	if err != nil {
 		return nil, "", err
