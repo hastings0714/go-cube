@@ -3,6 +3,10 @@ cube:
   sql_table: default.audit
 
   segments:
+    # Rewrites the source in setupQuery; does not restrict base account history.
+    accountSensitive7d:
+      sql: 1 = 1
+
     org:
       sql: org = {vars.org}
 
