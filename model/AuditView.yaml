@@ -3,21 +3,6 @@ cube:
   sql_table: default.audit
 
   segments:
-    # Keep base history; do not read old sensitive states. Source overrides must
-    # expose dt and both AggregateFunction(uniqMap, Map(String, String)) columns,
-    # or override this segment along with the dimensions/measures.
-    accountSensitiveToday:
-      source_sql: >-
-        (
-          SELECT * EXCEPT(req_sens_uniq, res_sens_uniq), req_sens_uniq, res_sens_uniq
-          FROM {source} WHERE dt = today()
-          UNION ALL
-          SELECT * EXCEPT(req_sens_uniq, res_sens_uniq),
-            initializeAggregation('uniqMapState', CAST(map(), 'Map(String, String)')) AS req_sens_uniq,
-            initializeAggregation('uniqMapState', CAST(map(), 'Map(String, String)')) AS res_sens_uniq
-          FROM {source} WHERE dt != today()
-        ) AS account_audit
-
     org:
       sql: org = {vars.org}
 
@@ -163,6 +148,11 @@ cube:
       type: number
       title: 是否涉敏
 
+    hasSensitiveToday:
+      sql: if(notEmpty(mapKeys(uniqMapMergeIf(req_sens_uniq, dt = today()))) OR notEmpty(mapKeys(uniqMapMergeIf(res_sens_uniq, dt = today()))), 1, 0)
+      type: number
+      title: 今日是否涉敏
+
     accountAssetUniq:
       sql: uniqIf(content, channel, type = 'User')
       type: number
@@ -205,6 +195,14 @@ cube:
       type: number
       title: 涉敏应用账号精确数量
 
+    sensitiveAccountAssetCountToday:
+      sql: >-
+        uniqExactIf(tuple(channel, content), type = 'User' AND dt = today() AND
+          (notEmpty(mapKeys(finalizeAggregation(req_sens_uniq))) OR
+           notEmpty(mapKeys(finalizeAggregation(res_sens_uniq)))))
+      type: number
+      title: 今日涉敏应用账号精确数量
+
     # 风险规则相关（与请求/响应涉敏结构一致）
     # riskCount: arrayFilter过滤掉score=0的规则
     riskScoreTuple:
@@ -218,11 +216,21 @@ cube:
       type: array
       title: 请求涉敏
 
+    reqSensScoreTupleToday:
+      sql: arraySort(x -> (-x.2,x.1), arrayMap(x -> (format('{}({})', x.1, toString(x.2)), dictGetInt64('default.privacy_dict','score',x.1)), arrayZip(mapKeys(uniqMapMergeIf(req_sens_uniq, dt = today())), mapValues(uniqMapMergeIf(req_sens_uniq, dt = today())))))
+      type: array
+      title: 今日请求涉敏
+
     # 响应涉敏 [('密码(14)', 80), ('手机(13)', 50)]
     resSensScoreTuple:
       sql: arraySort(x -> (-x.2,x.1), arrayMap(x -> (format('{}({})', x.1, toString(x.2)), dictGetInt64('default.privacy_dict','score',x.1)), arrayZip(mapKeys(uniqMapMerge(res_sens_uniq)), mapValues(uniqMapMerge(res_sens_uniq)))))
       type: array
       title: 响应涉敏
+
+    resSensScoreTupleToday:
+      sql: arraySort(x -> (-x.2,x.1), arrayMap(x -> (format('{}({})', x.1, toString(x.2)), dictGetInt64('default.privacy_dict','score',x.1)), arrayZip(mapKeys(uniqMapMergeIf(res_sens_uniq, dt = today())), mapValues(uniqMapMergeIf(res_sens_uniq, dt = today())))))
+      type: array
+      title: 今日响应涉敏
 
     # 地图: 国家->唯一IP数
     countryIpSumMap:

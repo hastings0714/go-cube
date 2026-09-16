@@ -346,32 +346,16 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 		return tmpl
 	}
 
-	baseSource := applyVars(cube.GetSQLTable())
-	fromSQL := baseSource
-	sourceSegment := ""
+	fromSQL := applyVars(cube.GetSQLTable())
 
 	for _, seg := range req.Segments {
 		_, segName, _ := splitMemberName(seg)
 		s, ok := cube.Segments[segName]
-		if !ok {
-			log.Printf("WARN: unknown segment %q not found in cube %q, skipped", seg, cube.Name)
+		if !ok || s.SQL == "" {
+			if !ok {
+				log.Printf("WARN: unknown segment %q not found in cube %q, skipped", seg, cube.Name)
+			}
 			continue
-		}
-		if s.SourceSQL != "" {
-			if sourceSegment != "" && sourceSegment != segName {
-				return "", fmt.Errorf("multiple source segments are not supported: %s, %s", sourceSegment, segName)
-			}
-			if !strings.Contains(s.SourceSQL, "{source}") {
-				return "", fmt.Errorf("segment %s source_sql must contain {source}", seg)
-			}
-			if baseSource == "" {
-				return "", fmt.Errorf("segment %s source has unresolved variables", seg)
-			}
-			fromSQL = applyVars(strings.ReplaceAll(s.SourceSQL, "{source}", baseSource))
-			if fromSQL == "" {
-				return "", fmt.Errorf("segment %s source_sql has unresolved variables", seg)
-			}
-			sourceSegment = segName
 		}
 		if result := applyVars(s.SQL); result != "" {
 			where = append(where, result)
