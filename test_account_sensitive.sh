@@ -19,14 +19,17 @@ cleanup() {
     ch "DROP DATABASE IF EXISTS $db" >/dev/null || true
     rm -rf "$work"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 ch "CREATE DATABASE $db"
 ch "CREATE TABLE $db.audit (org String, dt Date, channel String, type String, content String, count UInt64, first_ts DateTime, last_ts DateTime, req_sens_uniq AggregateFunction(uniqMap, Map(String,String)), res_sens_uniq AggregateFunction(uniqMap, Map(String,String))) ENGINE=MergeTree PARTITION BY dt ORDER BY (org,dt,channel,type,content)"
 ch "INSERT INTO $db.audit SELECT 'o',today()-days,'app','User',account,visits,toDateTime(today()-days),toDateTime(today()-days),initializeAggregation('uniqMapState',map('phone',value)),initializeAggregation('uniqMapState',map('email',value)) FROM values('account String, days UInt16, visits UInt64, value String', ('old',20,10,'old'),('mixed',20,100,'old'),('mixed',0,3,'recent'),('included',6,1,'in'),('excluded',7,1,'out'))"
+ch "CREATE TABLE $db.privacy_dict_source (name String, score Int64) ENGINE=Memory"
+ch "INSERT INTO $db.privacy_dict_source VALUES ('phone',50),('email',20)"
+ch "CREATE DICTIONARY $db.privacy_dict (name String, score Int64) PRIMARY KEY name SOURCE(CLICKHOUSE(DB '$db' TABLE 'privacy_dict_source')) LAYOUT(HASHED()) LIFETIME(0)"
 
 mkdir "$work/model"
-sed "s/default\.audit/$db.audit/g" model/AuditView.yaml > "$work/model/AuditView.yaml"
+sed -e "s/default\.audit/$db.audit/g" -e "s/default\.privacy_dict/$db.privacy_dict/g" model/AuditView.yaml > "$work/model/AuditView.yaml"
 cat >> "$work/model/AuditView.yaml" <<'YAML'
     sensitiveValues:
       sql: uniqMapMerge(req_sens_uniq)['phone']
@@ -69,7 +72,7 @@ done
 [ "$ready" = 1 ] || { echo '[FAIL] temporary API server did not become healthy'; cat "$work/server.log"; exit 1; }
 
 load() { curl -fsS "http://127.0.0.1:$PORT/load" -H 'Content-Type: application/json' -H 'X-Sw-Org: o' --data-binary "$1"; }
-query='{"dimensions":["AuditView.content"],"measures":["AuditView.count","AuditView.firstTs","AuditView.lastTs","AuditView.accountStatus","AuditView.hasSensitiveToday","AuditView.sensitiveValues","AuditView.sensitiveValuesToday","AuditView.responseValuesToday"],"segments":["AuditView.org"],"order":{"AuditView.content":"asc"},"limit":10}'
+query='{"dimensions":["AuditView.content"],"measures":["AuditView.count","AuditView.firstTs","AuditView.lastTs","AuditView.accountStatus","AuditView.hasSensitiveToday","AuditView.reqSensScoreTupleToday","AuditView.resSensScoreTupleToday","AuditView.sensitiveValues","AuditView.sensitiveValuesToday","AuditView.responseValuesToday"],"segments":["AuditView.org"],"order":{"AuditView.content":"asc"},"limit":10}'
 load "$query" > "$work/rows.json"
 load "$(jq -c '.filters=[{member:"AuditView.hasSensitiveToday",operator:"equals",values:["1"]}]' <<< "$query")" > "$work/filtered.json"
 load '{"measures":["AuditView.accountAssetCount","AuditView.sensitiveAccountAssetCountToday"],"segments":["AuditView.org"]}' > "$work/counts.json"
@@ -85,6 +88,11 @@ assert data['mixed']['AuditView.firstTs'] != data['mixed']['AuditView.lastTs']
 assert int(data['mixed']['AuditView.sensitiveValues']) == 2
 assert {k: int(v['AuditView.sensitiveValuesToday']) for k, v in data.items()} == {'old': 0, 'mixed': 1, 'included': 0, 'excluded': 0}
 assert {k: int(v['AuditView.responseValuesToday']) for k, v in data.items()} == {'old': 0, 'mixed': 1, 'included': 0, 'excluded': 0}
+assert data['mixed']['AuditView.reqSensScoreTupleToday'] == [['phone(1)', 50]]
+assert data['mixed']['AuditView.resSensScoreTupleToday'] == [['email(1)', 20]]
+for key in ['old', 'included', 'excluded']:
+    assert data[key]['AuditView.reqSensScoreTupleToday'] == []
+    assert data[key]['AuditView.resSensScoreTupleToday'] == []
 assert {r['AuditView.content'] for r in rows('filtered')} == {'mixed'}
 counts = rows('counts')[0]
 assert int(counts['AuditView.accountAssetCount']) == 4
