@@ -85,6 +85,9 @@ data = {r['AuditView.content']: r for r in rows('rows')}
 assert set(data) == {'old', 'mixed', 'included', 'excluded'}
 assert int(data['mixed']['AuditView.count']) == 103
 assert data['mixed']['AuditView.firstTs'] != data['mixed']['AuditView.lastTs']
+assert {k: v['AuditView.accountStatus'] for k, v in data.items()} == {
+    'old': 'active', 'mixed': 'active', 'included': 'new', 'excluded': 'active'
+}
 assert int(data['mixed']['AuditView.sensitiveValues']) == 2
 assert {k: int(v['AuditView.sensitiveValuesToday']) for k, v in data.items()} == {'old': 0, 'mixed': 1, 'included': 0, 'excluded': 0}
 assert {k: int(v['AuditView.responseValuesToday']) for k, v in data.items()} == {'old': 0, 'mixed': 1, 'included': 0, 'excluded': 0}
