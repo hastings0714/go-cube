@@ -36,6 +36,35 @@ cat >> "$work/model/AuditView.yaml" <<'YAML'
       sql: uniqMapMerge(res_sens_uniq)['email']
       type: number
 YAML
+# Contract-only models exercise source_sql validation through the HTTP API.
+cat > "$work/model/SourceContractView.yaml" <<YAML
+cube:
+  name: SourceContractView
+  sql_table: $db.audit
+  dimensions:
+    content:
+      sql: content
+      type: string
+  segments:
+    valid:
+      source_sql: (SELECT * FROM {source}) AS valid_source
+    second:
+      source_sql: (SELECT * FROM {source}) AS second_source
+    missingPlaceholder:
+      source_sql: (SELECT * FROM $db.audit) AS missing_source
+YAML
+cat > "$work/model/UnresolvedSourceView.yaml" <<'YAML'
+cube:
+  name: UnresolvedSourceView
+  sql_table: "{vars.missing_source}"
+  dimensions:
+    content:
+      sql: content
+      type: string
+  segments:
+    wrapped:
+      source_sql: (SELECT * FROM {source}) AS wrapped_source
+YAML
 # Capture the actual SQL sent by the API and explain it against the same fixture.
 python3 - "$CLICKHOUSE_URL" "$work" <<'PYPROXY' &
 import http.server, pathlib, sys, urllib.request, urllib.error
@@ -89,11 +118,22 @@ for _ in {1..100}; do
 done
 [ "$ready" = 1 ] || { echo "[FAIL] temporary API server did not become healthy"; cat "$work/server.log"; exit 1; }
 load() { curl -fsS "http://127.0.0.1:$PORT/load" -H 'Content-Type: application/json' -H 'X-Sw-Org: o' --data-binary "$1"; }
+expect_error() {
+    expected=$1
+    request=$2
+    status=$(curl -sS -o "$work/error.json" -w '%{http_code}' "http://127.0.0.1:$PORT/load" -H 'Content-Type: application/json' --data-binary "$request")
+    [ "$status" = 500 ]
+    jq -e --arg expected "$expected" '.error | contains($expected)' "$work/error.json" >/dev/null
+}
 query='{"dimensions":["AuditView.content"],"measures":["AuditView.count","AuditView.firstTs","AuditView.lastTs","AuditView.accountStatus","AuditView.hasSensitive","AuditView.sensitiveValues","AuditView.responseValues"],"segments":["AuditView.org","AuditView.accountSensitive7d"],"order":{"AuditView.content":"asc"},"limit":10}'
 load "$query" > "$work/recent.json"
 load "$(jq -c '.segments=["AuditView.org"]' <<< "$query")" > "$work/all.json"
 load "$(jq -c '.filters=[{member:"AuditView.hasSensitive",operator:"equals",values:["1"]}]' <<< "$query")" > "$work/filtered.json"
 load '{"measures":["AuditView.accountAssetCount","AuditView.sensitiveAccountAssetCount"],"segments":["AuditView.org","AuditView.accountSensitive7d"]}' > "$work/counts.json"
+load '{"dimensions":["SourceContractView.content"],"segments":["SourceContractView.valid"],"limit":1}' >/dev/null
+expect_error 'source_sql must contain {source}' '{"dimensions":["SourceContractView.content"],"segments":["SourceContractView.missingPlaceholder"]}'
+expect_error 'multiple source segments are not supported' '{"dimensions":["SourceContractView.content"],"segments":["SourceContractView.valid","SourceContractView.second"]}'
+expect_error 'source has unresolved variables' '{"dimensions":["UnresolvedSourceView.content"],"segments":["UnresolvedSourceView.wrapped"]}'
 python3 - "$work" <<'PY'
 import json,sys,pathlib,re
 p=pathlib.Path(sys.argv[1])
@@ -124,3 +164,4 @@ assert 'req_sens_uniq' not in outputs[1] and 'res_sens_uniq' not in outputs[1], 
 assert 'count' in outputs[1] and 'first_ts' in outputs[1], outputs
 print('[PASS] EXPLAIN: old branch excludes both sensitive columns; overridden source is used')
 PY
+echo '[PASS] source_sql contract: replacement and validation errors'

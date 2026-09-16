@@ -364,6 +364,9 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 			if !strings.Contains(s.SourceSQL, "{source}") {
 				return "", fmt.Errorf("segment %s source_sql must contain {source}", seg)
 			}
+			if baseSource == "" {
+				return "", fmt.Errorf("segment %s source has unresolved variables", seg)
+			}
 			fromSQL = applyVars(strings.ReplaceAll(s.SourceSQL, "{source}", baseSource))
 			if fromSQL == "" {
 				return "", fmt.Errorf("segment %s source_sql has unresolved variables", seg)
