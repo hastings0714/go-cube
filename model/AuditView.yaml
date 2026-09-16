@@ -6,16 +6,16 @@ cube:
     # Keep base history; do not read old sensitive states. Source overrides must
     # expose dt and both AggregateFunction(uniqMap, Map(String, String)) columns,
     # or override this segment along with the dimensions/measures.
-    accountSensitive7d:
+    accountSensitiveToday:
       source_sql: >-
         (
           SELECT * EXCEPT(req_sens_uniq, res_sens_uniq), req_sens_uniq, res_sens_uniq
-          FROM {source} WHERE dt >= today() - 6 AND dt <= today()
+          FROM {source} WHERE dt = today()
           UNION ALL
           SELECT * EXCEPT(req_sens_uniq, res_sens_uniq),
             initializeAggregation('uniqMapState', CAST(map(), 'Map(String, String)')) AS req_sens_uniq,
             initializeAggregation('uniqMapState', CAST(map(), 'Map(String, String)')) AS res_sens_uniq
-          FROM {source} WHERE dt < today() - 6 OR dt > today()
+          FROM {source} WHERE dt != today()
         ) AS account_audit
 
     org:

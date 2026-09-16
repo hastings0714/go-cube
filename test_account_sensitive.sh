@@ -125,11 +125,11 @@ expect_error() {
     [ "$status" = 500 ]
     jq -e --arg expected "$expected" '.error | contains($expected)' "$work/error.json" >/dev/null
 }
-query='{"dimensions":["AuditView.content"],"measures":["AuditView.count","AuditView.firstTs","AuditView.lastTs","AuditView.accountStatus","AuditView.hasSensitive","AuditView.sensitiveValues","AuditView.responseValues"],"segments":["AuditView.org","AuditView.accountSensitive7d"],"order":{"AuditView.content":"asc"},"limit":10}'
+query='{"dimensions":["AuditView.content"],"measures":["AuditView.count","AuditView.firstTs","AuditView.lastTs","AuditView.accountStatus","AuditView.hasSensitive","AuditView.sensitiveValues","AuditView.responseValues"],"segments":["AuditView.org","AuditView.accountSensitiveToday"],"order":{"AuditView.content":"asc"},"limit":10}'
 load "$query" > "$work/recent.json"
 load "$(jq -c '.segments=["AuditView.org"]' <<< "$query")" > "$work/all.json"
 load "$(jq -c '.filters=[{member:"AuditView.hasSensitive",operator:"equals",values:["1"]}]' <<< "$query")" > "$work/filtered.json"
-load '{"measures":["AuditView.accountAssetCount","AuditView.sensitiveAccountAssetCount"],"segments":["AuditView.org","AuditView.accountSensitive7d"]}' > "$work/counts.json"
+load '{"measures":["AuditView.accountAssetCount","AuditView.sensitiveAccountAssetCount"],"segments":["AuditView.org","AuditView.accountSensitiveToday"]}' > "$work/counts.json"
 load '{"dimensions":["SourceContractView.content"],"segments":["SourceContractView.valid"],"limit":1}' >/dev/null
 expect_error 'source_sql must contain {source}' '{"dimensions":["SourceContractView.content"],"segments":["SourceContractView.missingPlaceholder"]}'
 expect_error 'multiple source segments are not supported' '{"dimensions":["SourceContractView.content"],"segments":["SourceContractView.valid","SourceContractView.second"]}'
@@ -147,12 +147,12 @@ for key in a:
 assert int(b['mixed']['AuditView.count'])==103
 assert int(a['mixed']['AuditView.sensitiveValues'])==2
 assert int(a['mixed']['AuditView.responseValues'])==2
-assert {k:int(v['AuditView.sensitiveValues']) for k,v in b.items()}=={'old':0,'mixed':1,'included':1,'excluded':0}
-assert {k:int(v['AuditView.responseValues']) for k,v in b.items()}=={'old':0,'mixed':1,'included':1,'excluded':0}
-assert {r['AuditView.content'] for r in rows('filtered')}=={'mixed','included'}
+assert {k:int(v['AuditView.sensitiveValues']) for k,v in b.items()}=={'old':0,'mixed':1,'included':0,'excluded':0}
+assert {k:int(v['AuditView.responseValues']) for k,v in b.items()}=={'old':0,'mixed':1,'included':0,'excluded':0}
+assert {r['AuditView.content'] for r in rows('filtered')}=={'mixed'}
 c=rows('counts')[0]
-assert int(c['AuditView.accountAssetCount'])==4 and int(c['AuditView.sensitiveAccountAssetCount'])==2
-print('[PASS] seven-day request/response boundaries and exact values; base statistics and original audit unchanged')
+assert int(c['AuditView.accountAssetCount'])==4 and int(c['AuditView.sensitiveAccountAssetCount'])==1
+print('[PASS] today request/response boundaries and exact values; base statistics and original audit unchanged')
 print('[PASS] sensitive filter/count consistency')
 query=(p/'query.sql').read_text()
 assert 'default.audit' not in query, 'source_sql must honor the model source override'
