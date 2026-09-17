@@ -165,6 +165,16 @@ cube:
       type: string
       title: 敏感数据名称(请求)
 
+    reqSensPosShortKey:
+      sql: "splitByChar('.', arrayJoin(JSONExtractKeysAndValuesRaw(req_body)).1)[-1]"
+      type: string
+      title: 请求敏感数据位置短Key
+
+    reqSensPosValue:
+      sql: "arrayJoin(JSONExtractKeysAndValuesRaw(req_body)).2"
+      type: string
+      title: 请求敏感数据位置值
+
     respSensKey:
       sql: res_sens_k
       type: array
