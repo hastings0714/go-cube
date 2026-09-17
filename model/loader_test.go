@@ -79,6 +79,32 @@ func TestAccessViewResponseReasonPadsMissingElementsBeforeFiltering(t *testing.T
 	}
 }
 
+func TestAccessViewRequestSensitivePositionDimensions(t *testing.T) {
+	loader, err := NewLoaderFromFS(InternalFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cube, err := loader.Load("AccessView")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wants := map[string]string{
+		"reqSensPosShortKey": "splitByChar('.', arrayJoin(JSONExtractKeysAndValuesRaw(req_body)).1)[-1]",
+		"reqSensPosValue":    "arrayJoin(JSONExtractKeysAndValuesRaw(req_body)).2",
+	}
+	for name, want := range wants {
+		field, ok := cube.Dimensions[name]
+		if !ok {
+			t.Errorf("dimension %q is missing", name)
+			continue
+		}
+		if field.SQL != want {
+			t.Errorf("%s SQL mismatch:\nwant: %s\n got: %s", name, want, field.SQL)
+		}
+	}
+}
+
 func TestLoadMiss(t *testing.T) {
 	loader := NewLoader()
 	_, err := loader.Load("NoSuchModel")
