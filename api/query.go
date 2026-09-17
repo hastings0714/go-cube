@@ -11,6 +11,7 @@ import (
 
 type QueryRequest struct {
 	Ungrouped      bool            `json:"ungrouped"`
+	IncludeTotal   bool            `json:"includeTotal,omitempty"`
 	Measures       []string        `json:"measures"`
 	TimeDimensions []TimeDimension `json:"timeDimensions"`
 	Order          OrderList       `json:"order"`
@@ -23,7 +24,8 @@ type QueryRequest struct {
 	Mask           bool            `json:"-"`
 	// Vars 供调用方注入模板变量，不经 HTTP 传递。
 	// 键值对替换 SQL 中的 {vars.key} 占位符。
-	Vars map[string][]any `json:"-"`
+	Vars           map[string][]any `json:"-"`
+	queryNowMillis int64
 }
 
 // DateRange 支持字符串或字符串数组格式
@@ -230,7 +232,21 @@ const (
 	varLifecycleNewDays    = "api_lifecycle_new_days"
 )
 
+type queryBuildOptions struct {
+	skipOrder      bool
+	skipPagination bool
+	skipSettings   bool
+}
+
 func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
+	return buildQueryWithOptions(req, cube, queryBuildOptions{})
+}
+
+func buildQueryWithOptions(
+	req *QueryRequest,
+	cube *model.Cube,
+	options queryBuildOptions,
+) (string, error) {
 	mask := req.Mask
 
 	var sql strings.Builder
@@ -441,7 +457,7 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 
 	// ORDER BY
 	// 如果显式指定了排序，按请求排序；否则若存在带粒度的时间维度，隐式升序（兼容 CubeJS 默认行为）
-	if len(req.Order) > 0 {
+	if !options.skipOrder && len(req.Order) > 0 {
 		sql.WriteString(" ORDER BY ")
 		for i, item := range req.Order {
 			if i > 0 {
@@ -461,7 +477,7 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 				sql.WriteString(" DESC")
 			}
 		}
-	} else if len(granByDim) > 0 {
+	} else if !options.skipOrder && len(granByDim) > 0 {
 		// 隐式排序：取第一个带粒度的时间维度，按 timeDimensions 顺序确定
 		for _, td := range req.TimeDimensions {
 			if gc, ok := granByDim[td.Dimension]; ok {
@@ -473,22 +489,33 @@ func buildQuery(req *QueryRequest, cube *model.Cube) (string, error) {
 		}
 	}
 	// LIMIT/OFFSET
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 1000
-	}
-	fmt.Fprintf(&sql, " LIMIT %d", limit)
-	if req.Offset > 0 {
-		fmt.Fprintf(&sql, " OFFSET %d", req.Offset)
+	if !options.skipPagination {
+		limit := req.Limit
+		if limit <= 0 {
+			limit = 1000
+		}
+		fmt.Fprintf(&sql, " LIMIT %d", limit)
+		if req.Offset > 0 {
+			fmt.Fprintf(&sql, " OFFSET %d", req.Offset)
+		}
 	}
 
-	sql.WriteString(" SETTINGS priority = 1")
+	if !options.skipSettings {
+		sql.WriteString(" SETTINGS priority = 1")
+	}
 
 	// api_exact/api_regex are optional. When both are absent, segments that
 	// depend on them (for example ApiView.black) are skipped above. Dimensions
 	// such as sidebarTypeArray still contain the same placeholders, though, and
 	// should render as "no API filter" instead of failing the whole query.
 	finalSQL := sql.String()
+	if req.queryNowMillis > 0 {
+		finalSQL = strings.ReplaceAll(
+			finalSQL,
+			"now()",
+			fmt.Sprintf("fromUnixTimestamp64Milli(%d)", req.queryNowMillis),
+		)
+	}
 	for _, key := range []string{"api_exact", "api_regex"} {
 		if _, ok := req.Vars[key]; !ok {
 			finalSQL = strings.ReplaceAll(finalSQL, "{vars."+key+"}", "''")

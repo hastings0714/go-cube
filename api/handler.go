@@ -176,7 +176,12 @@ func stringVars(vals []string) []any {
 
 // handleLoadStream 流式处理 ungrouped 查询，使用 NDJSON 逐行返回。
 func (h *Handler) handleLoadStream(ctx context.Context, w http.ResponseWriter, node string, req *QueryRequest) {
-	_, query, err := h.setupQuery(req)
+	// 仅为显式请求 total 的 AccessView 明细流固定 now()。
+	// total 与明细由两条 ClickHouse SQL 并行执行，必须共享同一个动态时间窗口。
+	if req.IncludeTotal && req.Ungrouped && extractModelNameFromRequest(req) == "AccessView" {
+		req.queryNowMillis = time.Now().UnixMilli()
+	}
+	m, query, err := h.setupQuery(req)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -193,6 +198,53 @@ func (h *Handler) handleLoadStream(ctx context.Context, w http.ResponseWriter, n
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	flusher, _ := w.(http.Flusher)
+
+	type totalResult struct {
+		total int64
+		err   error
+	}
+	var totalCh <-chan totalResult
+	if req.IncludeTotal && req.Ungrouped && m.Name == "AccessView" {
+		ch := make(chan totalResult, 1)
+		totalCh = ch
+		totalReq := *req
+		totalReq.IncludeTotal = false
+		go func() {
+			detailQuery, buildErr := buildQueryWithOptions(
+				&totalReq,
+				m,
+				queryBuildOptions{
+					skipOrder:      true,
+					skipPagination: true,
+					skipSettings:   true,
+				},
+			)
+			if buildErr != nil {
+				ch <- totalResult{err: buildErr}
+				return
+			}
+			totalQuery := `SELECT count() AS "AccessView.count" FROM (` + detailQuery + `) SETTINGS priority = 1`
+			rows, queryErr := h.chClient.Query(ctx, node, totalQuery)
+			if queryErr != nil {
+				ch <- totalResult{err: queryErr}
+				return
+			}
+			var total int64
+			if len(rows) > 0 {
+				switch value := rows[0]["AccessView.count"].(type) {
+				case float64:
+					total = int64(value)
+				case json.Number:
+					total, queryErr = value.Int64()
+				case string:
+					total, queryErr = strconv.ParseInt(value, 10, 64)
+				default:
+					queryErr = fmt.Errorf("unexpected AccessView.count type %T", value)
+				}
+			}
+			ch <- totalResult{total: total, err: queryErr}
+		}()
+	}
 
 	var wrote bool
 	_, err = h.chClient.QueryStream(ctx, node, query, func(row map[string]interface{}) error {
@@ -222,6 +274,20 @@ func (h *Handler) handleLoadStream(ctx context.Context, w http.ResponseWriter, n
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		} else {
 			fmt.Fprintf(w, `{"error":%q}`+"\n", err.Error())
+		}
+	}
+	if totalCh != nil {
+		result := <-totalCh
+		meta := map[string]any{"total": result.total}
+		if result.err != nil {
+			meta["error"] = result.err.Error()
+		}
+		buf, marshalErr := json.Marshal(map[string]any{"__cube_meta": meta})
+		if marshalErr == nil {
+			_, _ = w.Write(append(buf, '\n'))
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 }

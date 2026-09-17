@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -1143,6 +1144,106 @@ func TestHandleLoad_MissingOrgHeaderGeneratesEmptyOrg(t *testing.T) {
 	// org 未传时应生成 org = ''，而非跳过 segment
 	if !contains(capturedQuery, "org = ''") {
 		t.Fatalf("expected org = '' when org header missing, got: %s", capturedQuery)
+	}
+}
+
+func TestHandleLoadStream_AccessViewEmptyPageIncludesTotalWithSharedQueryNow(t *testing.T) {
+	queries := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read query body: %v", err)
+			return
+		}
+		query := string(body)
+		queries <- query
+		if strings.Contains(query, `count() AS "AccessView.count"`) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"AccessView.count":7}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		// 模拟动态窗口移动后当前 offset 已越界：明细流没有数据行。
+	}))
+	defer server.Close()
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	chClient, err := sql.NewClient(&config.ClickHouseConfig{
+		Hosts:        []string{host},
+		Database:     "default",
+		QueryTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("create clickhouse client: %v", err)
+	}
+
+	body := `{
+		"ungrouped":true,
+		"includeTotal":true,
+		"dimensions":["AccessView.id","AccessView.sensValueExt"],
+		"timeDimensions":[{
+			"dimension":"AccessView.ts",
+			"dateRange":"from 15 minutes ago to now"
+		}],
+		"limit":20,
+		"offset":40
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/load", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+	rr := httptest.NewRecorder()
+
+	h := &Handler{modelLoader: newTestLoaderFromFS(t, model.InternalFS), chClient: chClient}
+	h.HandleLoad(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.TrimSpace(rr.Body.String()) != `{"__cube_meta":{"total":7}}` {
+		t.Fatalf("empty page must still return exact total metadata, got %q", rr.Body.String())
+	}
+
+	queryA, queryB := <-queries, <-queries
+	nowPattern := regexp.MustCompile(`fromUnixTimestamp64Milli\(([0-9]+)\)`)
+	matchA, matchB := nowPattern.FindStringSubmatch(queryA), nowPattern.FindStringSubmatch(queryB)
+	if len(matchA) != 2 || len(matchB) != 2 || matchA[1] != matchB[1] {
+		t.Fatalf("data and total queries must share query time: %q / %q", queryA, queryB)
+	}
+	if strings.Contains(queryB, "OFFSET 40") == strings.Contains(queryA, "OFFSET 40") {
+		t.Fatalf("exactly one query should contain the data offset: %q / %q", queryA, queryB)
+	}
+	totalQuery := queryA
+	if strings.Contains(totalQuery, "OFFSET 40") {
+		totalQuery = queryB
+	}
+	if !strings.Contains(totalQuery, `SELECT count() AS "AccessView.count" FROM (SELECT id AS "AccessView.id"`) {
+		t.Fatalf("total must wrap the unpaginated detail query: %s", totalQuery)
+	}
+	if !strings.Contains(totalQuery, "arrayJoin(arrayConcat(req_sens_v, res_sens_v))") {
+		t.Fatalf("total must preserve row-expanding detail dimensions: %s", totalQuery)
+	}
+}
+
+func TestSetupQuery_OrdinaryQueryPreservesNow(t *testing.T) {
+	req := &QueryRequest{
+		Dimensions: []string{"AccessView.ts"},
+		TimeDimensions: []TimeDimension{
+			{
+				Dimension: "AccessView.ts",
+				DateRange: DateRange{V: "from 15 minutes ago to now"},
+			},
+		},
+	}
+	h := &Handler{modelLoader: newTestLoaderFromFS(t, model.InternalFS)}
+	_, query, err := h.setupQuery(req)
+	if err != nil {
+		t.Fatalf("setup query: %v", err)
+	}
+	if !strings.Contains(query, "now()") {
+		t.Fatalf("ordinary queries must preserve now(): %s", query)
+	}
+	if strings.Contains(query, "fromUnixTimestamp64Milli") {
+		t.Fatalf("ordinary queries must not receive a stream-total query anchor: %s", query)
 	}
 }
 
